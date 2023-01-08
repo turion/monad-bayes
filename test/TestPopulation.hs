@@ -20,11 +20,11 @@ weightedSampleSize = fmap length . population
 
 popSize :: IO Int
 popSize =
-  sampleIOfixed (weightedSampleSize $ spawn 5 >> sprinkler)
+  sampleIOfixed (weightedSampleSize $ spawn 5 *> sprinkler)
 
 manySize :: IO Int
 manySize =
-  sampleIOfixed (weightedSampleSize $ spawn 5 >> sprinkler >> spawn 3)
+  sampleIOfixed (weightedSampleSize $ spawn 5 *> sprinkler *> spawn 3)
 
 sprinkler :: MonadMeasure m => m Bool
 sprinkler = Sprinkler.soft
@@ -39,12 +39,12 @@ transCheck1 =
 
 transCheck2 :: Bool
 transCheck2 =
-  enumerator (collapse (spawn 2 >> sprinkler))
+  enumerator (collapse (spawn 2 *> sprinkler))
     ~== sprinklerExact
 
 resampleCheck :: Int -> Bool
 resampleCheck n =
-  (enumerator . collapse . resampleMultinomial) (spawn n >> sprinkler)
+  (enumerator . collapse . resampleMultinomial) (spawn n *> sprinkler)
     ~== sprinklerExact
 
 popAvgCheck :: Bool

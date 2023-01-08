@@ -63,7 +63,7 @@ withRandomness randomness (Density m) = evalStateT (iterTM f m) randomness
       xs <- get
       case xs of
         [] -> error "Density: the list of randomness was too short"
-        y : ys -> put ys >> k y
+        y : ys -> put ys *> k y
 
 -- | Execute computation with supplied values for a subset of random choices.
 -- Return the output value and a record of all random choices used, whether
@@ -79,7 +79,7 @@ density randomness (Density m) =
       xs <- get
       x <- case xs of
         [] -> random
-        y : ys -> put ys >> return y
+        y : ys -> put ys *> return y
       tell [x]
       k x
 
