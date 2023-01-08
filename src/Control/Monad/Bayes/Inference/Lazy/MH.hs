@@ -24,7 +24,7 @@ mh p m = do
   -- Split the random number generator in two
   -- One part is used as the first seed for the simulation,
   -- and one part is used for the randomness in the MH algorithm.
-  g <- newStdGen >> getStdGen
+  g <- newStdGen *> getStdGen
   let (g1, g2) = split g
   let t = randomTree g1
   let (x, w) = runSampler (weighted m) t

@@ -71,7 +71,7 @@ instance MonadDistribution m => MonadDistribution (Traced m) where
   random = Traced $ fmap ((,) random . singleton) random
 
 instance MonadFactor m => MonadFactor (Traced m) where
-  score w = Traced $ fmap (score w,) (score w >> pure (scored w))
+  score w = Traced $ fmap (score w,) (score w *> pure (scored w))
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 

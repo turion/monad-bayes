@@ -32,7 +32,7 @@ instance MonadDistribution m => MonadDistribution (Density m) where
     trace <- get
     x <- case trace of
       [] -> random
-      r : xs -> put xs >> pure r
+      r : xs -> put xs *> pure r
     tell [x]
     pure x
 

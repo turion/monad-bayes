@@ -99,6 +99,7 @@ library
     LambdaCase
     OverloadedStrings
     TupleSections
+    ApplicativeDo
 
   if flag(dev)
     ghc-options:
@@ -223,6 +224,8 @@ benchmark ssm-bench
     , monad-bayes
     , pretty-simple
     , random
+  default-extensions:
+    ApplicativeDo
 
 benchmark speed-bench
   type:               exitcode-stdio-1.0
@@ -265,3 +268,4 @@ benchmark speed-bench
     LambdaCase
     OverloadedStrings
     TupleSections
+    ApplicativeDo
