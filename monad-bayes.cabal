@@ -91,6 +91,7 @@ library
     , text
     , vector           ^>=0.12.0
     , vty
+    , operational
 
   default-extensions:
     BlockArguments
