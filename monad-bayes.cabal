@@ -108,6 +108,7 @@ library
     Control.Monad.Bayes.Traced.Dynamic
     Control.Monad.Bayes.Traced.Static
     Control.Monad.Bayes.Weighted
+    Control.Monad.Bayes.WithPDF
     Math.Integrators.StormerVerlet
 
   hs-source-dirs:     src
