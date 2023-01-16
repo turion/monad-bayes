@@ -57,6 +57,8 @@ module Control.Monad.Bayes.Class
     MonadMeasure,
     discrete,
     normalPdf,
+    MonadObserve,
+    observe,
     Bayesian (..),
     poissonPdf,
     posterior,
@@ -255,6 +257,24 @@ factor ::
   Log Double ->
   m ()
 factor = score
+
+-- | Monads in which a random value can be observed to equal a given, deterministic value.
+--   This conditions on the observation.
+--
+--   If the probability that the random value @ma :: m a@ assumes the value @a@ is @p@,
+--   then @'observe' a ((, ()) <$> ma)@ has the same effect like @'score' p@.
+--   Extremely, @observe@ is required to satisfy the following law:
+-- @
+--   'observe' b ('return' 'True') == 'condition' b
+-- @
+class MonadFactor m => MonadObserve m where
+  -- | Condition on the assumption that a random value produced a certain sample
+  observe ::
+    -- | The data produced
+    a ->
+    -- | The random observation, producing data and other auxiliary output
+    m (a, b) ->
+    m b
 
 -- | Type synonym for random values that can be interpreted in any 'MonadDistribution'.
 --   Useful for pretty type signatures. But note that Markov kernels aren't represented by @a -> Distribution b@:

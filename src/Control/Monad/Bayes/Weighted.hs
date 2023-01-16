@@ -30,6 +30,7 @@ import Control.Monad.Bayes.Class
     MonadFactor (..),
     MonadMeasure,
     factor,
+    MonadObserve (..),
   )
 import Control.Monad.State (MonadIO, MonadTrans, StateT (..), lift, mapStateT, modify)
 import Numeric.Log (Log)
@@ -43,6 +44,9 @@ instance Monad m => MonadFactor (Weighted m) where
   score w = Weighted (modify (* w))
 
 instance MonadDistribution m => MonadMeasure (Weighted m)
+
+instance MonadObserve m => MonadObserve (Weighted m) where
+  observe a action = withWeight $ observe a $ fmap (\((a, b), p) -> (a, (b, p))) $ runWeighted action
 
 -- | Obtain an explicit value of the likelihood for a given value.
 weighted, runWeighted :: Weighted m a -> m (a, Log Double)

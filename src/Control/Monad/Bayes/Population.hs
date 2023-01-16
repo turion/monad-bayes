@@ -63,6 +63,7 @@ import Numeric.Log (Log, ln, sum)
 import Numeric.Log qualified as Log
 import Prelude hiding (all, sum)
 
+-- FIXME how can this derive MonadFactor?? how does it factor individual paths?
 -- | A collection of weighted samples, or particles.
 newtype Population m a = Population (Weighted (ListT m) a)
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadDistribution, MonadFactor, MonadMeasure)
@@ -70,6 +71,7 @@ newtype Population m a = Population (Weighted (ListT m) a)
 instance MonadTrans Population where
   lift = Population . lift . lift
 
+-- FIXME this exposes the invalidity of ListT
 -- | Explicit representation of the weighted sample with weights in the log
 -- domain.
 population, runPopulation :: Population m a -> m [(a, Log Double)]
