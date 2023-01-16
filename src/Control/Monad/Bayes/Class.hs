@@ -256,18 +256,24 @@ factor ::
   m ()
 factor = score
 
--- | synonym for pretty type signatures, but note that (A -> Distribution B) won't work as intended: for that, use Kernel
--- Also note that the use of RankNTypes means performance may take a hit: really the main point of these signatures is didactic
+-- | Type synonym for random values that can be interpreted in any 'MonadDistribution'.
+--   Useful for pretty type signatures. But note that Markov kernels aren't represented by @a -> Distribution b@:
+--   For that, use 'Kernel' instead.
+--   Also note that the use of `RankNTypes` means performance may take a hit.
+--   The main point of these type signatures is didactic, and not production code.
 type Distribution a = forall m. MonadDistribution m => m a
 
+-- | See 'Distribution'.
 type Measure a = forall m. MonadMeasure m => m a
 
+-- | See 'Distribution'.
 type Kernel a b = forall m. MonadMeasure m => a -> m b
 
 -- | Hard conditioning.
 condition :: MonadFactor m => Bool -> m ()
 condition b = score $ if b then 1 else 0
 
+-- | Draw a number of independent samples
 independent :: Applicative m => Int -> m a -> m [a]
 independent = replicateM
 
