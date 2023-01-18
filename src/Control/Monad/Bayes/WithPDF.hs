@@ -9,6 +9,7 @@ So I had an idea about a compromise. If we can't integrate theta, maybe we can M
 The idea here is to record both how to sample a value from a distribution as well as the PDF of the distribution. We can't always compute the pdf exactly in a hierarchical model, but we now can ergonomically sample from it! This gives us access to an observe function which is like scoring, except that we don't have to compute the PDF manually.
 -}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 module Control.Monad.Bayes.WithPDF where
 
 -- base
@@ -22,20 +23,19 @@ import Control.Monad.Bayes.Class
 
 data WithPDFT m a = WithPDFT
   { sample :: m a
-  , pdf :: a -> m (Log Double)
+  , pdf :: Eq a => a -> m (Log Double)
   }
 
+-- FIXME Implment Num
 
 instance Monad m => Functor (WithPDFT m) where
   fmap = liftM
+  -- FIXME This still produces Borel's paradox! Can we add rewrite rules for typical functions like `(* x)`, `(+ x)` etc.?
 
 instance Monad m => Applicative (WithPDFT m) where
   pure a = WithPDFT
     { sample = pure a
-    -- FIXME I can't implement return for general `a` because I don't have an `Eq a` constraint.
-    -- (Also, `pdf a` would have to return infinity (delta distribution), but we could get away with a constant if it's okay to be unnormalized.)
-    -- Is it possible to save this with a free monad construction?
-    , pdf = undefined
+    , pdf = \a' -> return $ if a == a' then 1 else 0
     }
   (<*>) = ap
 
@@ -50,6 +50,8 @@ instance Monad m => Monad (WithPDFT m) where
         let WithPDFT { pdf } = f a
         pdf b
     }
+  -- FIXME This doesn't satisfy `ma >>= return == ma`!
+  -- Can we add a rewrite rule that enforces that? (+ a test that checks it)
 
 instance MonadDistribution m => MonadDistribution (WithPDFT m) where
   random = WithPDFT
@@ -74,7 +76,7 @@ instance MonadFactor m => MonadFactor (WithPDFT m) where
     }
 
 -- | Semantically like @\a' -> condition $ a == a'@, but avoids Borel's paradox
-observe :: MonadFactor m => a -> WithPDFT m a -> m ()
+observe :: (MonadFactor m, Eq a) => a -> WithPDFT m a -> m ()
 observe a WithPDFT { pdf } = do
   probability <- pdf a
   score probability
