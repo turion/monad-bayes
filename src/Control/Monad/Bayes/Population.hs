@@ -53,7 +53,9 @@ import Control.Monad.Bayes.Weighted
     weighted,
     withWeight,
   )
-import Control.Monad.List (ListT (..), MonadIO, MonadTrans (..))
+import Control.Monad.IO.Class
+import Control.Monad.Trans
+import Control.Monad.Trans.Free.Ap
 import Data.List (unfoldr)
 import Data.List qualified
 import Data.Maybe (catMaybes)
@@ -64,7 +66,7 @@ import Numeric.Log qualified as Log
 import Prelude hiding (all, sum)
 
 -- | A collection of weighted samples, or particles.
-newtype Population m a = Population (Weighted (ListT m) a)
+newtype Population m a = Population (Weighted (FreeT [] m) a)
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadDistribution, MonadFactor, MonadMeasure)
 
 instance MonadTrans Population where
@@ -72,19 +74,19 @@ instance MonadTrans Population where
 
 -- | Explicit representation of the weighted sample with weights in the log
 -- domain.
-population, runPopulation :: Population m a -> m [(a, Log Double)]
-population (Population m) = runListT $ weighted m
+population, runPopulation :: Monad m => Population m a -> m [(a, Log Double)]
+population (Population m) = iterT ((fmap concat . sequence)) $ fmap pure $ weighted m
 
 -- | deprecated synonym
 runPopulation = population
 
 -- | Explicit representation of the weighted sample.
-explicitPopulation :: Functor m => Population m a -> m [(a, Double)]
+explicitPopulation :: Monad m => Population m a -> m [(a, Double)]
 explicitPopulation = fmap (map (second (exp . ln))) . population
 
 -- | Initialize 'Population' with a concrete weighted sample.
 fromWeightedList :: Monad m => m [(a, Log Double)] -> Population m a
-fromWeightedList = Population . withWeight . ListT
+fromWeightedList = Population . withWeight . FreeT . fmap (Free . fmap pure)
 
 -- | Increase the sample size by a given factor.
 -- The weights are adjusted such that their sum is preserved.
@@ -269,7 +271,7 @@ popAvg f p = do
 
 -- | Applies a transformation to the inner monad.
 hoist ::
-  Monad n =>
+  (Monad m, Monad n) =>
   (forall x. m x -> n x) ->
   Population m a ->
   Population n a
