@@ -14,7 +14,7 @@ import Control.Monad.Trans.State.Strict
 -- monad-bayes
 import Control.Monad.Bayes.Class hiding (Distribution)
 
-newtype Variable = Variable Int
+newtype Variable   = Variable Int
   deriving Show
 
 -- FIXME do I need const here and realized later? Or can I get away with only variables?

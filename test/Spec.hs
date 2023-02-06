@@ -67,20 +67,20 @@ main = hspec do
     it "" $
       all
         (== True)
-        [ TestIntegrator.passed1,
-          TestIntegrator.passed2,
-          TestIntegrator.passed3,
-          TestIntegrator.passed4,
-          TestIntegrator.passed5,
-          TestIntegrator.passed6,
-          TestIntegrator.passed7,
-          TestIntegrator.passed8,
-          TestIntegrator.passed9,
-          TestIntegrator.passed10,
-          TestIntegrator.passed11,
-          TestIntegrator.passed12,
-          TestIntegrator.passed13,
-          TestIntegrator.passed14
+        [ TestIntegrator.passed1
+        , TestIntegrator.passed2
+        , TestIntegrator.passed3
+        , TestIntegrator.passed4
+        , TestIntegrator.passed5
+        , TestIntegrator.passed6
+        , TestIntegrator.passed7
+        , TestIntegrator.passed8
+        , TestIntegrator.passed9
+        , TestIntegrator.passed10
+        , TestIntegrator.passed11
+        , TestIntegrator.passed12
+        , TestIntegrator.passed13
+        , TestIntegrator.passed14
         ]
         `shouldBe` True
 
