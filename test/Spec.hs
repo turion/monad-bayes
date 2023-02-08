@@ -13,6 +13,7 @@ import TestIntegrator qualified
 import TestPipes (hmms)
 import TestPipes qualified
 import TestPopulation qualified
+import TestSSMFixtures qualified
 import TestSampler qualified
 import TestSequential qualified
 import TestStormerVerlet qualified
@@ -167,3 +168,4 @@ main = hspec do
       passed7 `shouldBe` True
 
   TestBenchmarks.test
+  TestSSMFixtures.test
