@@ -54,16 +54,17 @@ instance (Num a, Typeable a) => Num (Value a) where
 -- FIXME Maybe I should put the functor bla etc. here?
 -- Or parametrize distribution constructors over a?
 data Distribution a where
-  Normal :: Value Double -> Value Double -> Distribution Double
-  Beta :: Value Double -> Value Double -> Distribution Double
+  Normal :: Variable Double -> Variable Double -> Distribution Double
+  Beta :: Variable Double -> Variable Double -> Distribution Double
 
 deriving instance Show (Distribution a)
+
 deriving instance Eq (Distribution a)
 
 pdf :: MonadDistribution m => Distribution a -> a -> DelayedSamplingT m (Log Double)
 pdf (Normal mean stdDev) a = do
-  meanValue <- sample mean
-  stdDevValue <- sample stdDev
+  meanValue <- sample $ Var mean
+  stdDevValue <- sample $ Var stdDev
   return $ normalPdf meanValue stdDevValue a
 pdf (Beta _alpha _beta) _ = error "Not implemented beta distribution pdf yet"
 
@@ -134,12 +135,12 @@ interpret (Initialized distribution) = interpretDistribution distribution
 
 interpretDistribution :: MonadDistribution m => Distribution a -> DelayedSamplingT m a
 interpretDistribution (Normal mean stdDev) = do
-  meanValue <- sample mean
-  stdDevValue <- sample stdDev
+  meanValue <- sample $ Var mean
+  stdDevValue <- sample $ Var stdDev
   lift $ normal meanValue stdDevValue
 interpretDistribution (Beta a b) = do
-  aValue <- sample a
-  bValue <- sample b
+  aValue <- sample $ Var a
+  bValue <- sample $ Var b
   lift $ beta aValue bValue
 
 -- unsafe: doesn't check whether already realized
@@ -182,7 +183,7 @@ newVar distribution = DelayedSamplingT $ lift $ do
   put $ Graph $ distributions ++ [SomeNode (Initialized distribution)]
   return $ Variable $ length distributions
 
-normalDS :: Monad m => Value Double -> Value Double -> DelayedSamplingT m (Variable Double)
+normalDS :: Monad m => Variable Double -> Variable Double -> DelayedSamplingT m (Variable Double)
 normalDS mean stdDev = newVar $ Normal mean stdDev
 
 -- FIXME I'd like to observe on Value a, but I don't know how to do that with var1 + var2
@@ -193,13 +194,16 @@ observe variable@(Variable i) a = do
   -- FIXME this doesn't yet work if I have realized nodes, those play the same role as Const!
   case node of
     -- FIXME this implements the normal distribution as a single-parameter distribution. But there is an exp. family for the double parameter as well!
-    Initialized (Normal (Var varMean) stdDev) -> do
+    Initialized (Normal varMean stdDev) -> do
       -- FIXME this sampling before or after the lookup? in principle they could intertwine, or not? Or is that a topology forbidden by the paper algo?
-      stdDevValue <- sample stdDev
+      stdDevValue <- sample $ Var stdDev
       meanNode <- lookupVar varMean
       case meanNode of
         -- FIXME what does the original algorithm do when these are random as well? sample them first? or send further messages down?
-        Initialized (Normal (Const priorMean) (Const priorStdDev)) -> do
+        Initialized (Normal varPriorMean varPriorStdDev) -> do
+        -- no actually marginalize it first completely!
+          priorStdDev <- sample $ Var varPriorStdDev
+          priorMean <- sample $ Var varPriorMean
           let precision = 1 / sqrt (1 / square stdDevValue + 1 / square priorStdDev)
               newMean = (a / square stdDevValue + priorMean / square priorStdDev) / precision
           reinitialize varMean $ Normal (Const newMean) (Const $ 1 / sqrt precision)
