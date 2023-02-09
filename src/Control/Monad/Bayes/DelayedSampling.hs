@@ -5,11 +5,6 @@
 
 module Control.Monad.Bayes.DelayedSampling where
 
--- base
-
--- transformers
-
--- monad-bayes
 import Control.Monad.Bayes.Class hiding (Distribution)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class
