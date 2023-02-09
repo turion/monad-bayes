@@ -2,21 +2,22 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
+
 module Control.Monad.Bayes.DelayedSampling where
 
 -- base
-import Data.Maybe (listToMaybe, fromMaybe)
-import Data.Typeable (cast, Typeable)
 
 -- transformers
-import Control.Monad.Trans.Class
-import Control.Monad.Trans.Except
-import Control.Monad.Trans.State.Strict
 
 -- monad-bayes
 import Control.Monad.Bayes.Class hiding (Distribution)
-import Statistics.Function (square)
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Except
+import Control.Monad.Trans.State.Strict
+import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Typeable (Typeable, cast)
+import Statistics.Function (square)
 
 newtype Variable a = Variable Int
   deriving (Show, Eq)
@@ -35,18 +36,21 @@ data Value a where
   Negate :: Num a => Value a -> Value a
 
 deriving instance Show a => Show (Value a)
+
 deriving instance Eq a => Eq (Value a)
 
 instance (Num a, Typeable a) => Num (Value a) where
   Var var + Const a = VarPlus var a
   Const a + Var var = VarPlus var a
   val1 + val2 = Plus val1 val2
+
   -- val1 + val2 = (+) <$> val1 <*> val2
   (*) = Multiply
   abs = Abs
   signum = Signum
   fromInteger = Const . fromInteger
   negate = Negate
+
 -- FIXME When adding fmap: now I don't have show anymore because of the arbitrary function. any chance to get it back?
 -- By showing a blackbox for a function? By overloading lambdas?
 
@@ -77,7 +81,7 @@ data Node a
   | Realized a
   deriving (Show, Eq)
 
-data SomeNode = forall a . (Eq a, Show a, Typeable a) => SomeNode { getSomeNode :: Node a }
+data SomeNode = forall a. (Eq a, Show a, Typeable a) => SomeNode {getSomeNode :: Node a}
 
 deriving instance Show SomeNode
 
@@ -87,7 +91,7 @@ instance Eq SomeNode where
 castNode :: Typeable a => SomeNode -> Maybe (Node a)
 castNode (SomeNode node) = cast node
 
-newtype Graph = Graph { getGraph :: [SomeNode] }
+newtype Graph = Graph {getGraph :: [SomeNode]}
   deriving (Show, Eq)
 
 empty :: Graph
@@ -98,18 +102,17 @@ data Error
   = IndexOutOfBounds Int
   | TypesInconsistent Int
   | AlreadyRealized Int
-  -- | Only exists for MonadFail
-  | Fail String
+  | -- | Only exists for MonadFail
+    Fail String
   deriving (Eq, Show)
 
-newtype DelayedSamplingT m a = DelayedSamplingT { getDelayedSamplingT :: ExceptT Error (StateT Graph m) a }
+newtype DelayedSamplingT m a = DelayedSamplingT {getDelayedSamplingT :: ExceptT Error (StateT Graph m) a}
   deriving (Functor, Applicative, Monad, MonadIO)
 
 instance MonadTrans DelayedSamplingT where
   lift = DelayedSamplingT . lift . lift
 
 instance Monad m => MonadFail (DelayedSamplingT m) where
-
   fail = throw . Fail
 
 throw :: Monad m => Error -> DelayedSamplingT m a
@@ -174,6 +177,7 @@ sample (Multiply val1 val2) = (*) <$> sample val1 <*> sample val2
 sample (Abs val) = abs <$> sample val
 sample (Signum val) = signum <$> sample val
 sample (Negate val) = negate <$> sample val
+
 -- sample (Fmap f value) = f <$> sample value
 -- sample (Ap f value) = sample f <*> sample value
 
