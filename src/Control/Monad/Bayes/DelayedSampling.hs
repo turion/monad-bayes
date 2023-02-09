@@ -10,9 +10,13 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State.Strict
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.List.NonEmpty (unzip)
+import Data.Maybe (fromMaybe)
 import Data.Typeable (Typeable, cast)
 import Statistics.Function (square)
+import Prelude hiding (unzip)
+import Data.Tuple (swap)
+import Control.Arrow (first)
 
 newtype Variable a = Variable Int
   deriving (Show, Eq)
@@ -33,8 +37,8 @@ deriving instance Eq a => Eq (Value a)
 -- FIXME Maybe I should put the functor bla etc. here?
 -- Or parametrize distribution constructors over a?
 data Distribution a where
-  Normal :: Variable Double -> Variable Double -> Distribution Double
-  Beta :: Variable Double -> Variable Double -> Distribution Double
+  Normal :: Value Double -> Value Double -> Distribution Double
+  Beta :: Value Double -> Value Double -> Distribution Double
 
 deriving instance Show (Distribution a)
 
@@ -42,8 +46,8 @@ deriving instance Eq (Distribution a)
 
 pdf :: MonadDistribution m => Distribution a -> a -> DelayedSamplingT m (Log Double)
 pdf (Normal mean stdDev) a = do
-  meanValue <- sample $ Var mean
-  stdDevValue <- sample $ Var stdDev
+  meanValue <- sample mean
+  stdDevValue <- sample stdDev
   return $ normalPdf meanValue stdDevValue a
 pdf (Beta _alpha _beta) _ = error "Not implemented beta distribution pdf yet"
 
@@ -95,21 +99,25 @@ throw = DelayedSamplingT . throwE
 tryElse :: Monad m => Error -> Maybe a -> DelayedSamplingT m a
 tryElse e = maybe (throw e) return
 
-lookupVar :: (Monad m, Typeable a) => Variable a -> DelayedSamplingT m (Node a)
-lookupVar (Variable i) = do
-  graph <- DelayedSamplingT $ lift get
-  someNode <- tryElse (IndexOutOfBounds i) $ lookupListSafe i $ getGraph graph
-  tryElse (TypesInconsistent i) $ castNode someNode
+-- FIXME look into lenses
+onNode :: (Monad m, Eq a, Show a, Typeable a) => State (Node a) b -> Variable a -> DelayedSamplingT m b
+onNode action (Variable i) = do
+  graph <- DelayedSamplingT $ lift $ gets getGraph
+  (graph', bMaybe) <- tryElse (IndexOutOfBounds i) $ modifyListSafe i (unzip . fmap (first SomeNode . swap . runState action) . castNode) graph
+  DelayedSamplingT $ lift $ put $ Graph graph'
+  tryElse (TypesInconsistent i) bMaybe
+  -- tryElse (TypesInconsistent i) $ castNode someNode
+
+lookupVar :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m (Node a)
+lookupVar = onNode get
 
 -- FIXME all these are probably mean that I should use sequences for variables.
 -- FIXME and named variables as well
-lookupListSafe :: Int -> [a] -> Maybe a
-lookupListSafe i = listToMaybe . drop i
 
-replaceListSafe :: Int -> a -> [a] -> Maybe [a]
-replaceListSafe i a as = case splitAt i as of
+modifyListSafe :: Int -> (a -> (Maybe a, b)) -> [a] -> Maybe ([a], b)
+modifyListSafe i f as = case splitAt i as of
   (_prefix, []) -> Nothing
-  (prefix, _ : suffix) -> Just $ prefix ++ (a : suffix)
+  (prefix, a : suffix) -> let (aMaybe, b) = f a in Just (prefix ++ (fromMaybe a aMaybe : suffix), b)
 
 -- FIXME name sample?
 interpret :: MonadDistribution m => Node a -> DelayedSamplingT m a
@@ -119,20 +127,17 @@ interpret Initialized {marginalDistribution = Just distribution} = interpretDist
 
 interpretDistribution :: MonadDistribution m => Distribution a -> DelayedSamplingT m a
 interpretDistribution (Normal mean stdDev) = do
-  meanValue <- sample $ Var mean
-  stdDevValue <- sample $ Var stdDev
+  meanValue <- sample mean
+  stdDevValue <- sample stdDev
   lift $ normal meanValue stdDevValue
 interpretDistribution (Beta a b) = do
-  aValue <- sample $ Var a
-  bValue <- sample $ Var b
+  aValue <- sample a
+  bValue <- sample b
   lift $ beta aValue bValue
 
 -- unsafe: doesn't check whether already realized
 realizeAs :: (Typeable a, Monad m, Show a, Eq a) => a -> Variable a -> DelayedSamplingT m ()
-realizeAs a (Variable i) = do
-  graph <- DelayedSamplingT $ lift get
-  nodes <- tryElse (IndexOutOfBounds i) $ replaceListSafe i (SomeNode $ Realized a) (getGraph graph)
-  DelayedSamplingT $ lift $ put $ Graph nodes
+realizeAs a = onNode $ put $ Realized a
 
 realize :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> DelayedSamplingT m a
 realize var = do
@@ -162,7 +167,7 @@ newVar initialDistribution = DelayedSamplingT $ lift $ do
   put $ Graph $ distributions ++ [SomeNode Initialized {initialDistribution, marginalDistribution = Nothing}]
   return $ Variable $ length distributions
 
-normalDS :: Monad m => Variable Double -> Variable Double -> DelayedSamplingT m (Variable Double)
+normalDS :: Monad m => Value Double -> Value Double -> DelayedSamplingT m (Variable Double)
 normalDS mean stdDev = newVar $ Normal mean stdDev
 
 -- FIXME this would be a lot easier if I had a view function that dereferences the variables
@@ -175,19 +180,17 @@ observe variable@(Variable i) a = do
   -- FIXME this doesn't yet work if I have realized nodes, those play the same role as Const!
   case node of
     -- FIXME this implements the normal distribution as a single-parameter distribution. But there is an exp. family for the double parameter as well!
-    Initialized {initialDistribution = Normal varMean stdDev, marginalDistribution = Nothing} -> do
+    Initialized {initialDistribution = Normal (Var varMean) stdDev, marginalDistribution = Nothing} -> do
       -- FIXME this sampling before or after the lookup? in principle they could intertwine, or not? Or is that a topology forbidden by the paper algo?
-      stdDevValue <- sample $ Var stdDev
+      stdDevValue <- sample stdDev
       meanNode <- lookupVar varMean
       case meanNode of
-        Initialized { marginalDistribution = Just (Normal varPriorMean varPriorStdDev)} -> do
+        Initialized { marginalDistribution = Just (Normal (Const priorMean) (Const priorStdDev))} -> do
         -- FIXME what does the original algorithm do when these are random as well? sample them first? or send further messages down?
         -- no actually marginalize it first completely!
-          priorStdDev <- sample $ Var varPriorStdDev
-          priorMean <- sample $ Var varPriorMean
           let precision = 1 / sqrt (1 / square stdDevValue + 1 / square priorStdDev)
               newMean = (a / square stdDevValue + priorMean / square priorStdDev) / precision
-          reinitialize varMean $ Normal (Const newMean) (Const $ 1 / sqrt precision)
+          setMarginalized varMean $ Normal (Const newMean) (Const $ 1 / sqrt precision)
         Initialized {} -> do
           _mean <- sample $ Var varMean
           -- FIXME dirty hack because the recursion over the graph is not yet optimal
@@ -195,7 +198,7 @@ observe variable@(Variable i) a = do
         Realized mean -> do
           -- FIXME dirty hack because I treat Const and Realized differently
           -- FIXME does this handle stdDev correctly?
-          reinitialize variable $ Normal (Const mean) stdDev
+          setMarginalized variable $ Normal (Const mean) stdDev
           -- FIXME dirty hack because the recursion over the graph is not yet optimal
           observe variable a
     Initialized { marginalDistribution = Just distribution } -> do
@@ -211,11 +214,12 @@ observe variable@(Variable i) a = do
 
 -- FIXME this is just a step of marginalizing and might have a better name in the paper
 -- FIXME unsafe, doesn't check whether already realized
-reinitialize :: (Monad m, Typeable a, Show a, Eq a) => Variable a -> Distribution a -> DelayedSamplingT m ()
-reinitialize (Variable i) distribution = do
-  graph <- DelayedSamplingT $ lift get
-  nodes <- tryElse (IndexOutOfBounds i) $ replaceListSafe i (SomeNode $ Initialized distribution) (getGraph graph)
-  DelayedSamplingT $ lift $ put $ Graph nodes
+setMarginalized :: (Monad m, Typeable a, Show a, Eq a) => Variable a -> Distribution a -> DelayedSamplingT m ()
+setMarginalized variable marginalDistribution = flip onNode variable $ do
+  node <- get
+  case node of
+    Realized _ -> error "Already realized" -- FIXME should really have a local monad with error
+    initialized@Initialized { } -> put initialized { marginalDistribution = Just marginalDistribution }
 
 debugGraph :: Monad m => DelayedSamplingT m Graph
 debugGraph = DelayedSamplingT $ lift get
