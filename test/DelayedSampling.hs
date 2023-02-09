@@ -23,17 +23,6 @@ test = describe "DelayedSampling" $ do
       val2 <- sampleIOfixed $ normal 0 1
       val1 `shouldBe` val2
 
-    it "realizes variables even when applying calculation" $ do
-      Right (val1, val2) <- sampleIO $ evalDelayedSamplingT $ do
-        a <- Var <$> normalDS (Const 0) (Const 1)
-        (,) <$> sample a <*> sample (a + 3)
-      (val1 + 3) `shouldBe` val2
-      Right (a, b, abSum) <- sampleIO $ evalDelayedSamplingT $ do
-        a <- Var <$> normalDS (Const 0) (Const 1)
-        b <- Var <$> normalDS (Const 0) (Const 1)
-        (,,) <$> sample a <*> sample b <*> sample (a + b)
-      (a + b) `shouldBe` abSum
-
     it "samples independent variables like in direct sampling" $ do
       Right val1 <- sampleIOfixed $ evalDelayedSamplingT $ do
         a <- normalDS (Const 0) (Const 1)

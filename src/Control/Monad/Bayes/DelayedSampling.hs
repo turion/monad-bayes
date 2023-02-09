@@ -23,31 +23,10 @@ newtype Variable a = Variable Int
 data Value a where
   Var :: Variable a -> Value a
   Const :: a -> Value a
-  VarPlus :: Num a => Variable a -> a -> Value a
-  Plus :: Num a => Value a -> Value a -> Value a
-  Multiply :: Num a => Value a -> Value a -> Value a
-  Abs :: Num a => Value a -> Value a
-  Signum :: Num a => Value a -> Value a
-  Negate :: Num a => Value a -> Value a
 
 deriving instance Show a => Show (Value a)
 
 deriving instance Eq a => Eq (Value a)
-
-instance (Num a, Typeable a) => Num (Value a) where
-  Var var + Const a = VarPlus var a
-  Const a + Var var = VarPlus var a
-  val1 + val2 = Plus val1 val2
-
-  -- val1 + val2 = (+) <$> val1 <*> val2
-  (*) = Multiply
-  abs = Abs
-  signum = Signum
-  fromInteger = Const . fromInteger
-  negate = Negate
-
--- FIXME When adding fmap: now I don't have show anymore because of the arbitrary function. any chance to get it back?
--- By showing a blackbox for a function? By overloading lambdas?
 
 -- FIXME: Use syb (or recursion-schemes?) to push variable indices by an Int
 
@@ -166,12 +145,6 @@ realize var = do
 sample :: (MonadDistribution m, Typeable a, Show a, Eq a) => Value a -> DelayedSamplingT m a
 sample (Const a) = return a
 sample (Var var) = realize var
-sample (VarPlus var a) = (a +) <$> realize var
-sample (Plus val1 val2) = (+) <$> sample val1 <*> sample val2
-sample (Multiply val1 val2) = (*) <$> sample val1 <*> sample val2
-sample (Abs val) = abs <$> sample val
-sample (Signum val) = signum <$> sample val
-sample (Negate val) = negate <$> sample val
 
 -- sample (Fmap f value) = f <$> sample value
 -- sample (Ap f value) = sample f <*> sample value
