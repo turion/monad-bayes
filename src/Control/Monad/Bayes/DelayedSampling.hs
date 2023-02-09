@@ -197,6 +197,8 @@ newVar initialDistribution = DelayedSamplingT $ lift $ do
 normalDS :: Monad m => Variable Double -> Variable Double -> DelayedSamplingT m (Variable Double)
 normalDS mean stdDev = newVar $ Normal mean stdDev
 
+-- FIXME this would be a lot easier if I had a view function that dereferences the variables
+
 -- FIXME I'd like to observe on Value a, but I don't know how to do that with var1 + var2
 -- FIXME read the paper again and try to abstract the MARGINALIZE step better
 observe :: (MonadMeasure m, Typeable a, Show a, Eq a) => Variable a -> a -> DelayedSamplingT m ()
