@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
 module Control.Monad.Bayes.DelayedSampling where
 
@@ -68,7 +69,12 @@ pdf (Normal mean stdDev) a = do
   return $ normalPdf meanValue stdDevValue a
 pdf (Beta _alpha _beta) _ = error "Not implemented beta distribution pdf yet"
 
-data Node a = Initialized (Distribution a) | Realized a
+data Node a
+  = Initialized
+      { initialDistribution :: Distribution a,
+        marginalDistribution :: Maybe (Distribution a)
+      }
+  | Realized a
   deriving (Show, Eq)
 
 data SomeNode = forall a . (Eq a, Show a, Typeable a) => SomeNode { getSomeNode :: Node a }
@@ -131,7 +137,8 @@ replaceListSafe i a as = case splitAt i as of
 -- FIXME name sample?
 interpret :: MonadDistribution m => Node a -> DelayedSamplingT m a
 interpret (Realized value) = return value
-interpret (Initialized distribution) = interpretDistribution distribution
+interpret Initialized {initialDistribution, marginalDistribution = Nothing} = interpretDistribution initialDistribution
+interpret Initialized {marginalDistribution = Just distribution} = interpretDistribution distribution
 
 interpretDistribution :: MonadDistribution m => Distribution a -> DelayedSamplingT m a
 interpretDistribution (Normal mean stdDev) = do
@@ -177,10 +184,10 @@ evalDelayedSamplingT :: Functor m => DelayedSamplingT m a -> m (Either Error a)
 evalDelayedSamplingT = fmap fst . runDelayedSamplingT
 
 newVar :: (Monad m, Typeable a, Show a, Eq a) => Distribution a -> DelayedSamplingT m (Variable a)
-newVar distribution = DelayedSamplingT $ lift $ do
+newVar initialDistribution = DelayedSamplingT $ lift $ do
   Graph distributions <- get
   -- FIXME this is inefficient
-  put $ Graph $ distributions ++ [SomeNode (Initialized distribution)]
+  put $ Graph $ distributions ++ [SomeNode Initialized {initialDistribution, marginalDistribution = Nothing}]
   return $ Variable $ length distributions
 
 normalDS :: Monad m => Variable Double -> Variable Double -> DelayedSamplingT m (Variable Double)
@@ -194,20 +201,20 @@ observe variable@(Variable i) a = do
   -- FIXME this doesn't yet work if I have realized nodes, those play the same role as Const!
   case node of
     -- FIXME this implements the normal distribution as a single-parameter distribution. But there is an exp. family for the double parameter as well!
-    Initialized (Normal varMean stdDev) -> do
+    Initialized {initialDistribution = Normal varMean stdDev, marginalDistribution = Nothing} -> do
       -- FIXME this sampling before or after the lookup? in principle they could intertwine, or not? Or is that a topology forbidden by the paper algo?
       stdDevValue <- sample $ Var stdDev
       meanNode <- lookupVar varMean
       case meanNode of
+        Initialized { marginalDistribution = Just (Normal varPriorMean varPriorStdDev)} -> do
         -- FIXME what does the original algorithm do when these are random as well? sample them first? or send further messages down?
-        Initialized (Normal varPriorMean varPriorStdDev) -> do
         -- no actually marginalize it first completely!
           priorStdDev <- sample $ Var varPriorStdDev
           priorMean <- sample $ Var varPriorMean
           let precision = 1 / sqrt (1 / square stdDevValue + 1 / square priorStdDev)
               newMean = (a / square stdDevValue + priorMean / square priorStdDev) / precision
           reinitialize varMean $ Normal (Const newMean) (Const $ 1 / sqrt precision)
-        Initialized _prior -> do
+        Initialized {} -> do
           _mean <- sample $ Var varMean
           -- FIXME dirty hack because the recursion over the graph is not yet optimal
           observe variable a
@@ -217,9 +224,14 @@ observe variable@(Variable i) a = do
           reinitialize variable $ Normal (Const mean) stdDev
           -- FIXME dirty hack because the recursion over the graph is not yet optimal
           observe variable a
-    Initialized distribution -> do
+    Initialized { marginalDistribution = Just distribution } -> do
       realizeAs a variable
       p <- pdf distribution a
+      lift $ score p
+    -- FIXME Is this even allowed?
+    Initialized { initialDistribution, marginalDistribution = Nothing } -> do
+      realizeAs a variable
+      p <- pdf initialDistribution a
       lift $ score p
     Realized _ -> throw (AlreadyRealized i)
 
