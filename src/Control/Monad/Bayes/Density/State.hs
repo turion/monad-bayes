@@ -31,7 +31,7 @@ instance MonadDistribution m => MonadDistribution (Density m) where
   random = do
     trace <- get
     x <- case trace of
-      [] -> random
+      [] -> lift random -- FIXME
       r : xs -> put xs >> pure r
     tell [x]
     pure x
