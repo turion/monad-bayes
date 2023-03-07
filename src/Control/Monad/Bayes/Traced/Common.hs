@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Common
 -- Description : Numeric code for Trace MCMC
@@ -84,12 +85,11 @@ bind dx f = do
 mhTrans :: MonadDistribution m => (Weighted (State.Density m)) a -> Trace a -> m (Trace a)
 mhTrans m t@Trace {variables = us, probDensity = p} = do
   let n = length us
-  us' <- do
-    i <- discrete $ discreteUniformAB 0 (n - 1)
-    u' <- random
-    case splitAt i us of
-      (xs, _ : ys) -> return $ xs ++ (u' : ys)
-      _ -> error "impossible"
+  i <- discrete $ discreteUniformAB 0 (n - 1)
+  u' <- random
+  let us' = case splitAt i us of
+        (xs, _ : ys) -> xs ++ (u' : ys)
+        _ -> error "impossible"
   ((b, q), vs) <- State.density (weighted m) us'
   let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (p * fromIntegral (length vs)))
   accept <- bernoulli ratio
@@ -102,16 +102,16 @@ mhTransFree m t = trace <$> mhTransWithBool m t
 mhTransWithBool :: MonadDistribution m => Weighted (Free.Density m) a -> Trace a -> m (MHResult a)
 mhTransWithBool m t@Trace {variables = us, probDensity = p} = do
   let n = length us
-  us' <- do
-    i <- discrete $ discreteUniformAB 0 (n - 1)
-    u' <- random
-    case splitAt i us of
-      (xs, _ : ys) -> return $ xs ++ (u' : ys)
-      _ -> error "impossible"
+  i <- discrete $ discreteUniformAB 0 (n - 1)
+  u' <- random
+  let us' = case splitAt i us of
+        (xs, _ : ys) -> xs ++ (u' : ys)
+        _ -> error "mhTransWithBool: impossible"
   ((b, q), vs) <- runWriterT $ weighted $ Weighted.hoist (WriterT . Free.density us') m
   let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (p * fromIntegral (length vs)))
-  accept <- bernoulli ratio
-  return if accept then MHResult True (Trace vs b q) else MHResult False t
+  success <- bernoulli ratio
+  let trace = if success then Trace vs b q else t
+  return MHResult {success, trace}
 
 -- | A variant of 'mhTrans' with an external sampling monad.
 mhTrans' :: MonadDistribution m => Weighted (Free.Density Identity) a -> Trace a -> m (Trace a)
