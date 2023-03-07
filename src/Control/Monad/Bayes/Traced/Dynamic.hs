@@ -80,8 +80,6 @@ fstProduct (Pair fa _) = fa
 sndProduct :: Product f g a -> g a
 sndProduct (Pair _ ga) = ga
 
--- | Freeze all traced random choices to their current values and stop tracing
--- them.
 freeze :: Monad m => Traced m a -> Traced m a
 freeze (Traced c) = Traced $ Compose $ do
   Pair _ t <- getCompose c

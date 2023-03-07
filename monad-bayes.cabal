@@ -55,6 +55,7 @@ library
     Control.Monad.Bayes.Sequential.Coroutine
     Control.Monad.Bayes.Traced
     Control.Monad.Bayes.Traced.Basic
+    Control.Monad.Bayes.Traced.Class
     Control.Monad.Bayes.Traced.Dynamic
     Control.Monad.Bayes.Traced.Static
     Control.Monad.Bayes.Weighted
@@ -84,7 +85,7 @@ library
     , pipes
     , pretty-simple
     , primitive
-    , random
+    , random           ^>=1.2
     , safe             ^>=0.3.17
     , scientific
     , semigroups
