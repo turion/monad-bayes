@@ -89,6 +89,7 @@ library
     , scientific
     , statistics       >=0.14.0 && <0.17
     , text
+    , transformers
     , vector           ^>=0.12.0
     , vty
 

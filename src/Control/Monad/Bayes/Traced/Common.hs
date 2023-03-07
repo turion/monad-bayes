@@ -1,4 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Common
 -- Description : Numeric code for Trace MCMC
@@ -9,9 +12,10 @@
 -- Portability : GHC
 module Control.Monad.Bayes.Traced.Common
   ( Trace (..),
+    TraceT (..),
+    output,
     singleton,
     scored,
-    bind,
     mhTrans,
     mhTransWithBool,
     mhTransFree,
@@ -32,60 +36,44 @@ import Control.Monad.Bayes.Weighted as Weighted
     hoist,
     weighted,
   )
-import Control.Monad.Writer (WriterT (WriterT, runWriterT))
+import Control.Monad.Writer (WriterT (WriterT, runWriterT), Writer)
 import Data.Functor.Identity (Identity (runIdentity))
 import Numeric.Log (Log, ln)
 import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
 
 data MHResult a = MHResult
   { success :: Bool,
-    trace :: Trace a
+    trace :: TraceT Identity a
   }
 
 -- | Collection of random variables sampler during the program's execution.
-data Trace a = Trace
+data Trace = Trace
   { -- | Sequence of random variables sampler during the program's execution.
     variables :: [Double],
-    --
-    output :: a,
     -- | The probability of observing this particular sequence.
     probDensity :: Log Double
   }
 
-instance Functor Trace where
-  fmap f t = t {output = f (output t)}
+deriving via ([Double], Log Double) instance Monoid Trace
 
-instance Applicative Trace where
-  pure x = Trace {variables = [], output = x, probDensity = 1}
-  tf <*> tx =
-    Trace
-      { variables = variables tf ++ variables tx,
-        output = output tf (output tx),
-        probDensity = probDensity tf * probDensity tx
-      }
+newtype TraceT m a = TraceT { getTraceT :: WriterT Trace m a }
+  deriving (Functor, Applicative, Monad)
 
-instance Monad Trace where
-  t >>= f =
-    let t' = f (output t)
-     in t' {variables = variables t ++ variables t', probDensity = probDensity t * probDensity t'}
+output :: Functor m => TraceT m a -> m a
+output = fmap fst . runWriterT . getTraceT
 
-singleton :: Double -> Trace Double
-singleton u = Trace {variables = [u], output = u, probDensity = 1}
+singleton :: Applicative m => Double -> TraceT m Double
+singleton u = TraceT $ WriterT $ pure (u, Trace {variables = [u], probDensity = 1})
 
-scored :: Log Double -> Trace ()
-scored w = Trace {variables = [], output = (), probDensity = w}
-
-bind :: Monad m => m (Trace a) -> (a -> m (Trace b)) -> m (Trace b)
-bind dx f = do
-  t1 <- dx
-  t2 <- f (output t1)
-  return $ t2 {variables = variables t1 ++ variables t2, probDensity = probDensity t1 * probDensity t2}
+-- FIXME Shouldn't we rather implement MonadFactor?
+scored :: Applicative m => Log Double -> TraceT m ()
+scored w = TraceT $ WriterT $ pure ((), Trace {variables = [], probDensity = w})
 
 -- FIXME Note: This is more like Gibbs sampling
 -- Note: We don't do a small step, but an arbitrarily big step in a parameter dimension. Why does this even work? It's probably not called Metropolis-Hastings?
 -- | A single Metropolis-corrected transition of single-site Trace MCMC.
-mhTrans :: MonadDistribution m => Weighted (State.Density m) a -> Trace a -> m (Trace a)
-mhTrans m t@Trace {variables = us, probDensity = p} = do
+mhTrans :: MonadDistribution m => Weighted (State.Density m) a -> Trace -> a -> TraceT m a
+mhTrans m t@Trace {variables = us, probDensity = p} a = TraceT $ WriterT $ do
   let n = length us
   i <- discrete $ discreteUniformAB 0 (n - 1)
   u' <- random
@@ -95,14 +83,14 @@ mhTrans m t@Trace {variables = us, probDensity = p} = do
   ((b, q), vs) <- State.density (weighted m) us'
   let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (p * fromIntegral (length vs)))
   accept <- bernoulli ratio
-  return $ if accept then Trace vs b q else t
+  pure if accept then (b, Trace vs q) else (a, t)
 
-mhTransFree :: MonadDistribution m => Weighted (Free.Density m) a -> Trace a -> m (Trace a)
-mhTransFree m t = trace <$> mhTransWithBool m t
+mhTransFree :: MonadDistribution m => Weighted (Free.Density m) a -> Trace -> a -> TraceT m a
+mhTransFree m t a = TraceT . WriterT $ runIdentity . runWriterT . getTraceT . trace <$> mhTransWithBool m t a
 
 -- | A single Metropolis-corrected transition of single-site Trace MCMC.
-mhTransWithBool :: MonadDistribution m => Weighted (Free.Density m) a -> Trace a -> m (MHResult a)
-mhTransWithBool m t@Trace {variables = us, probDensity = p} = do
+mhTransWithBool :: MonadDistribution m => Weighted (Free.Density m) a -> Trace -> a -> m (MHResult a)
+mhTransWithBool m t@Trace {variables = us, probDensity = p} a = do
   let n = length us
   i <- discrete $ discreteUniformAB 0 (n - 1)
   u' <- random
@@ -112,11 +100,11 @@ mhTransWithBool m t@Trace {variables = us, probDensity = p} = do
   ((b, q), vs) <- runWriterT $ weighted $ Weighted.hoist (WriterT . Free.density us') m
   let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (p * fromIntegral (length vs)))
   success <- bernoulli ratio
-  let trace = if success then Trace vs b q else t
+  let trace = TraceT $ WriterT $ pure if success then (b, Trace vs q) else (a, t)
   return MHResult {success, trace}
 
 -- | A variant of 'mhTrans' with an external sampling monad.
-mhTrans' :: MonadDistribution m => Weighted (Free.Density Identity) a -> Trace a -> m (Trace a)
+mhTrans' :: MonadDistribution m => Weighted (Free.Density Identity) a -> Trace -> a -> TraceT m a
 mhTrans' m = mhTransFree (Weighted.hoist (Free.hoist (return . runIdentity)) m)
 
 -- | burn in an MCMC chain for n steps (which amounts to dropping samples of the end of the list)
