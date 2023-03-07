@@ -26,12 +26,12 @@ import Control.Monad.Bayes.Class
 import Control.Monad.Bayes.Density.Free (Density)
 import Control.Monad.Bayes.Traced.Common
   ( Trace (..),
-    bind,
     mhTrans',
     scored,
-    singleton,
+    singleton, TraceT, output,
   )
 import Control.Monad.Bayes.Weighted (Weighted)
+import Control.Monad.Trans.Class
 import Data.Functor.Identity (Identity)
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
 
@@ -40,7 +40,7 @@ data Traced m a = Traced
   { -- | Run the program with a modified trace.
     model :: Weighted (Density Identity) a,
     -- | Record trace and output.
-    traceDist :: m (Trace a)
+    traceDist :: TraceT m a
   }
 
 instance Monad m => Functor (Traced m) where
@@ -57,10 +57,10 @@ instance Monad m => Monad (Traced m) where
       dy = dx `bind` (traceDist . f)
 
 instance MonadDistribution m => MonadDistribution (Traced m) where
-  random = Traced random (fmap singleton random)
+  random = Traced random (lift random >>= singleton)
 
 instance MonadFactor m => MonadFactor (Traced m) where
-  score w = Traced (score w) (score w >> pure (scored w))
+  score w = Traced (score w) (score w >> scored w)
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 
@@ -69,7 +69,7 @@ hoistTrace f (Traced m d) = Traced m (f d)
 
 -- | Discard the trace and supporting infrastructure.
 marginal :: Monad m => Traced m a -> m a
-marginal (Traced _ d) = fmap output d
+marginal (Traced _ d) = output d
 
 -- | A single step of the Trace Metropolis-Hastings algorithm.
 mhStep :: MonadDistribution m => Traced m a -> Traced m a

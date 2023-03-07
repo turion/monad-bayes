@@ -27,10 +27,9 @@ import Control.Monad.Bayes.Class
 import Control.Monad.Bayes.Density.Free (Density)
 import Control.Monad.Bayes.Traced.Common
   ( Trace (..),
-    bind,
     mhTransFree,
     scored,
-    singleton,
+    singleton, TraceT,
   )
 import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans (MonadTrans (..))
@@ -42,7 +41,7 @@ import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
 -- transformed monad.
 data Traced m a = Traced
   { model :: Weighted (Density m) a,
-    traceDist :: m (Trace a)
+    traceDist :: TraceT m a
   }
 
 instance Monad m => Functor (Traced m) where
