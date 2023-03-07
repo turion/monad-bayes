@@ -81,6 +81,8 @@ bind dx f = do
   t2 <- f (output t1)
   return $ t2 {variables = variables t1 ++ variables t2, probDensity = probDensity t1 * probDensity t2}
 
+-- FIXME Note: This is more like Gibbs sampling
+-- Note: We don't do a small step, but an arbitrarily big step in a parameter dimension. Why does this even work? It's probably not called Metropolis-Hastings?
 -- | A single Metropolis-corrected transition of single-site Trace MCMC.
 mhTrans :: MonadDistribution m => Weighted (State.Density m) a -> Trace a -> m (Trace a)
 mhTrans m t@Trace {variables = us, probDensity = p} = do
