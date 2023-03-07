@@ -82,7 +82,7 @@ bind dx f = do
   return $ t2 {variables = variables t1 ++ variables t2, probDensity = probDensity t1 * probDensity t2}
 
 -- | A single Metropolis-corrected transition of single-site Trace MCMC.
-mhTrans :: MonadDistribution m => (Weighted (State.Density m)) a -> Trace a -> m (Trace a)
+mhTrans :: MonadDistribution m => Weighted (State.Density m) a -> Trace a -> m (Trace a)
 mhTrans m t@Trace {variables = us, probDensity = p} = do
   let n = length us
   i <- discrete $ discreteUniformAB 0 (n - 1)
