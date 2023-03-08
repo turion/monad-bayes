@@ -17,7 +17,6 @@ module Control.Monad.Bayes.Traced.Common
     TraceT (..),
     runTraceT,
     traceT,
-    hoist,
     output,
     singleton,
     scored,
@@ -46,6 +45,7 @@ import Data.Functor.Identity (Identity (runIdentity))
 import Numeric.Log (Log, ln)
 import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
 import Control.Monad.Trans.Class (MonadTrans)
+import Control.Monad.Morph (MFunctor)
 
 data MHResult a = MHResult
   { success :: Bool,
@@ -75,16 +75,13 @@ instance Monoid Trace where
       }
 
 newtype TraceT m a = TraceT {getTraceT :: WriterT Trace m a}
-  deriving (Functor, Applicative, Monad, MonadTrans)
+  deriving (Functor, Applicative, Monad, MonadTrans, MFunctor)
 
 runTraceT :: TraceT m a -> m (a, Trace)
 runTraceT = runWriterT . getTraceT
 
 traceT :: m (a, Trace) -> TraceT m a
 traceT = TraceT . WriterT
-
-hoist :: (forall x. m x -> m x) -> TraceT m a -> TraceT m a
-hoist morph = TraceT . WriterT . morph . runWriterT . getTraceT
 
 -- FIXME this is a type change
 output :: Functor m => TraceT m a -> m a

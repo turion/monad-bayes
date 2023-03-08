@@ -37,8 +37,9 @@ import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans (MonadTrans (..))
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
 import Data.Functor.Product (Product (Pair))
-import Control.Monad.Bayes.Traced.Common (hoist, runTraceT)
+import Control.Monad.Bayes.Traced.Common (runTraceT)
 import Data.Functor.Identity (Identity(..))
+import Control.Monad.Morph (MFunctor(hoist))
 
 -- | A tracing monad where only a subset of random choices are traced.
 --
@@ -65,7 +66,7 @@ instance MonadFactor m => MonadFactor (Traced m) where
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 
-hoistTrace :: (forall x. m x -> m x) -> Traced m a -> Traced m a
+hoistTrace :: Monad m => (forall x. m x -> m x) -> Traced m a -> Traced m a
 hoistTrace f (Traced (Pair m d)) = Traced (Pair m (hoist f d))
 
 -- | Discard the trace and supporting infrastructure.

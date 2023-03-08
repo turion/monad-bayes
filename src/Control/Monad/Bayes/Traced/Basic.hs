@@ -31,12 +31,13 @@ import Control.Monad.Bayes.Traced.Common
     TraceT (..),
     mhTrans',
     scored,
-    singleton, TraceT, output, hoist, runTraceT, traceT,
+    singleton, TraceT, output, runTraceT, traceT,
   )
 import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans.Class
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
+import Control.Monad.Morph (hoist)
 
 -- | Tracing monad that records random choices made in the program.
 data Traced m a = Traced
@@ -65,7 +66,7 @@ instance MonadFactor m => MonadFactor (Traced m) where
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 
-hoistTrace :: (forall x. m x -> m x) -> Traced m a -> Traced m a
+hoistTrace :: Monad m => (forall x. m x -> m x) -> Traced m a -> Traced m a
 hoistTrace f (Traced m d) = Traced m (hoist f d)
 
 -- | Discard the trace and supporting infrastructure.
