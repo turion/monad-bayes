@@ -72,6 +72,7 @@ library
     , free             >=5.0.2  && <5.2
     , histogram-fill
     , ieee754          ^>=0.8.0
+    , iso-deriving
     , integration
     , lens
     , linear

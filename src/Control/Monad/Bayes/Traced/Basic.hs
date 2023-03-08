@@ -43,6 +43,8 @@ import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans.Class
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
+import Data.Functor.Product
+import Iso.Deriving (As1 (..), Isomorphic)
 import Control.Monad.Morph (hoist)
 
 -- | Tracing monad that records random choices made in the program.
@@ -53,16 +55,9 @@ data Traced m a = Traced
     traceDist :: TraceT m a
   }
   deriving stock Functor
+  deriving (Applicative, Monad) via (Product (Weighted (Density Identity)) (TraceT m) `As1` Traced m)
 
-instance Monad m => Applicative (Traced m) where
-  pure x = Traced (pure x) (pure x)
-  (Traced mf df) <*> (Traced mx dx) = Traced (mf <*> mx) (df <*> dx)
-
-instance Monad m => Monad (Traced m) where
-  (Traced mx dx) >>= f = Traced my dy
-    where
-      my = mx >>= model . f
-      dy = dx >>= traceDist . f
+instance Isomorphic (Product (Weighted (Density Identity)) (TraceT m) a) (Traced m a) where
 
 instance MonadDistribution m => MonadDistribution (Traced m) where
   random = Traced random (lift random >>= singleton)
