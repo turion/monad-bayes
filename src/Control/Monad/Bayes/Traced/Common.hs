@@ -3,6 +3,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Common
@@ -46,6 +47,8 @@ import Data.Functor.Identity (Identity (runIdentity))
 import Numeric.Log (Log, ln)
 import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
 import Control.Monad.Trans.Class (MonadTrans)
+import GHC.Generics
+import Data.Semigroup.Generic (GenericSemigroupMonoid(..))
 
 data MHResult a = MHResult
   { success :: Bool,
@@ -59,20 +62,9 @@ data Trace = Trace
     -- | The probability of observing this particular sequence.
     probDensity :: Log Double
   }
+  deriving Generic
+  deriving (Semigroup, Monoid) via (GenericSemigroupMonoid Trace)
 
-instance Semigroup Trace where
-  trace1 <> trace2 =
-    Trace
-      { variables = variables trace1 <> variables trace2,
-        probDensity = probDensity trace1 <> probDensity trace2
-      }
-
-instance Monoid Trace where
-  mempty =
-    Trace
-      { variables = mempty,
-        probDensity = mempty
-      }
 
 newtype TraceT m a = TraceT {getTraceT :: WriterT Trace m a}
   deriving (Functor, Applicative, Monad, MonadTrans)
