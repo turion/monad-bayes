@@ -46,6 +46,7 @@ import Data.Functor.Identity (Identity (runIdentity))
 import Numeric.Log (Log, ln)
 import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
 import Control.Monad.Trans.Class (MonadTrans)
+import Control.Monad.Morph (MFunctor)
 
 data MHResult a = MHResult
   { success :: Bool,

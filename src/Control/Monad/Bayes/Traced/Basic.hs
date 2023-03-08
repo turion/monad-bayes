@@ -37,6 +37,7 @@ import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans.Class
 import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
+import Control.Monad.Morph (hoist)
 
 -- | Tracing monad that records random choices made in the program.
 data Traced m a = Traced
