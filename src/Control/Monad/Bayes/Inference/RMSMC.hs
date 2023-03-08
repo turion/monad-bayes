@@ -50,8 +50,8 @@ rmsmc ::
   Population m a
 rmsmc (MCMCConfig {..}) (SMCConfig {..}) =
   marginal
-    . S.sequentially (composeCopies numMCMCSteps mhStep . TrStat.hoist resampler) numSteps
-    . S.hoistFirst (TrStat.hoist (spawn numParticles >>))
+    . S.sequentially (composeCopies numMCMCSteps mhStep . TrStat.hoistTrace resampler) numSteps
+    . S.hoistFirst (TrStat.hoistTrace (spawn numParticles >>))
 
 -- | Resample-move Sequential Monte Carlo with a more efficient
 -- tracing representation.
@@ -64,8 +64,8 @@ rmsmcBasic ::
   Population m a
 rmsmcBasic (MCMCConfig {..}) (SMCConfig {..}) =
   TrBas.marginal
-    . S.sequentially (composeCopies numMCMCSteps TrBas.mhStep . TrBas.hoist resampler) numSteps
-    . S.hoistFirst (TrBas.hoist (withParticles numParticles))
+    . S.sequentially (composeCopies numMCMCSteps TrBas.mhStep . TrBas.hoistTrace resampler) numSteps
+    . S.hoistFirst (TrBas.hoistTrace (withParticles numParticles))
 
 -- | A variant of resample-move Sequential Monte Carlo
 -- where only random variables since last resampling are considered
@@ -79,8 +79,8 @@ rmsmcDynamic ::
   Population m a
 rmsmcDynamic (MCMCConfig {..}) (SMCConfig {..}) =
   TrDyn.marginal
-    . S.sequentially (TrDyn.freeze . composeCopies numMCMCSteps TrDyn.mhStep . TrDyn.hoist resampler) numSteps
-    . S.hoistFirst (TrDyn.hoist (withParticles numParticles))
+    . S.sequentially (TrDyn.freeze . composeCopies numMCMCSteps TrDyn.mhStep . TrDyn.hoistTrace resampler) numSteps
+    . S.hoistFirst (TrDyn.hoistTrace (withParticles numParticles))
 
 -- | Apply a function a given number of times.
 composeCopies :: Int -> (a -> a) -> (a -> a)
