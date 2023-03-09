@@ -34,6 +34,7 @@ import Pipes qualified as P
 import Pipes.Prelude qualified as P
 import Text.Pretty.Simple (pShow, pShowNoColor)
 import Data.Functor.Identity (Identity(runIdentity))
+import Control.Monad.Bayes.Inference.MCMC.Config
 
 data MCMCData a = MCMCData
   { numSteps :: Int,

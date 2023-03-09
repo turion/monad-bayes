@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE TypeApplications #-}
 
 import Control.Monad.Bayes.Sampler.Strict
 import Data.Time (diffUTCTime, getCurrentTime)
@@ -17,6 +18,7 @@ import Options.Applicative
     option,
     short,
   )
+import qualified Control.Monad.Bayes.Traced.Static as Static
 
 infer :: Model -> Alg -> IO ()
 infer model alg = do

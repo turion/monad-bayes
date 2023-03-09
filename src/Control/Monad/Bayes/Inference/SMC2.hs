@@ -25,13 +25,14 @@ import Control.Monad.Bayes.Class
     MonadMeasure,
   )
 import Control.Monad.Bayes.Inference.MCMC
-import Control.Monad.Bayes.Inference.RMSMC (rmsmc)
 import Control.Monad.Bayes.Inference.SMC (SMCConfig (SMCConfig, numParticles, numSteps, resampler), smcPush)
 import Control.Monad.Bayes.Population as Pop (Population, population, resampleMultinomial)
 import Control.Monad.Bayes.Sequential.Coroutine (Sequential)
 import Control.Monad.Bayes.Traced
 import Control.Monad.Trans (MonadTrans (..))
 import Numeric.Log (Log)
+import Control.Monad.Bayes.Inference.MCMC.Config
+import Control.Monad.Bayes.Traced.Class (rmsmc)
 
 -- | Helper monad transformer for preprocessing the model for 'smc2'.
 newtype SMC2 m a = SMC2 (Sequential (Traced (Population m)) a)

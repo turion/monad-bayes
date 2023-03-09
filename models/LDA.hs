@@ -1,4 +1,5 @@
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- LDA model from Anglican
 -- (https://bitbucket.org/probprog/anglican-white-paper)
@@ -17,6 +18,7 @@ import Control.Monad.Bayes.Class
   )
 import Control.Monad.Bayes.Sampler.Strict (sampleIOfixed)
 import Control.Monad.Bayes.Traced (mh)
+import Control.Monad.Bayes.Traced.Static qualified as Static
 import Control.Monad.Bayes.Weighted (unweighted)
 import Data.Map qualified as Map
 import Data.Text (Text, words)
@@ -80,5 +82,5 @@ syntheticData d w = List.replicateM d (List.replicateM w syntheticWord)
 
 runLDA :: IO ()
 runLDA = do
-  s <- sampleIOfixed $ unweighted $ mh 1000 $ lda documents
+  s <- sampleIOfixed $ unweighted $ mh @Static.Traced 1000 $ lda documents
   pPrint (head s)

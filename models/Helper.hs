@@ -1,10 +1,11 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Helper where
 
 import Control.Monad.Bayes.Class (MonadMeasure)
-import Control.Monad.Bayes.Inference.MCMC (MCMCConfig (..), Proposal (SingleSiteMH))
+import Control.Monad.Bayes.Inference.MCMC.Config (MCMCConfig (..), Proposal (SingleSiteMH))
 import Control.Monad.Bayes.Inference.RMSMC (rmsmcBasic)
 import Control.Monad.Bayes.Inference.SMC
   ( SMCConfig (SMCConfig, numParticles, numSteps, resampler),
@@ -18,6 +19,7 @@ import Control.Monad.ST (runST)
 import HMM qualified
 import LDA qualified
 import LogReg qualified
+import qualified Control.Monad.Bayes.Traced.Static as Static
 
 data Model = LR Int | HMM Int | LDA (Int, Int)
   deriving stock (Show, Read)
@@ -59,7 +61,7 @@ runAlg model alg =
     MH ->
       let t = 100
           (_, m) = getModel model
-       in show <$> unweighted (mh t m)
+       in show <$> unweighted (mh @Static.Traced t m)
     RMSMC ->
       let n = 10
           t = 1

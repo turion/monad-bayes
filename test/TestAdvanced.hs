@@ -5,6 +5,7 @@ import Control.Monad (join)
 import Control.Monad.Bayes.Class
 import Control.Monad.Bayes.Enumerator
 import Control.Monad.Bayes.Inference.MCMC
+import Control.Monad.Bayes.Inference.MCMC.Config
 import Control.Monad.Bayes.Inference.PMMH
 import Control.Monad.Bayes.Inference.RMSMC
 import Control.Monad.Bayes.Inference.SMC
@@ -20,7 +21,7 @@ smcConfig = SMCConfig {numSteps = 0, numParticles = 1000, resampler = resampleMu
 
 passed1, passed2, passed3, passed4, passed5, passed6, passed7 :: IO Bool
 passed1 = do
-  sample <- sampleIOfixed $ mcmc MCMCConfig {numMCMCSteps = 10000, numBurnIn = 5000, proposal = SingleSiteMH} random
+  sample <- sampleIOfixed $ mcmcStatic MCMCConfig {numMCMCSteps = 10000, numBurnIn = 5000, proposal = SingleSiteMH} random
   return $ abs (0.5 - (expectation id $ fromList $ toEmpirical sample)) < 0.01
 passed2 = do
   sample <- sampleIOfixed $ population $ smc (SMCConfig {numSteps = 0, numParticles = 10000, resampler = resampleMultinomial}) random
@@ -32,7 +33,7 @@ passed4 = do
   sample <- sampleIOfixed $ population $ rmsmcBasic mcmcConfig smcConfig random
   return $ close 0.5 sample
 passed5 = do
-  sample <- sampleIOfixed $ population $ rmsmc mcmcConfig smcConfig random
+  sample <- sampleIOfixed $ population $ rmsmcStatic mcmcConfig smcConfig random
   return $ close 0.5 sample
 passed6 = do
   sample <-

@@ -43,6 +43,7 @@ library
     Control.Monad.Bayes.Inference.Lazy.MH
     Control.Monad.Bayes.Inference.Lazy.WIS
     Control.Monad.Bayes.Inference.MCMC
+    Control.Monad.Bayes.Inference.MCMC.Config
     Control.Monad.Bayes.Inference.PMMH
     Control.Monad.Bayes.Inference.RMSMC
     Control.Monad.Bayes.Inference.SMC

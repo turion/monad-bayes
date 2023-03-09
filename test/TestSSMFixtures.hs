@@ -1,9 +1,9 @@
 module TestSSMFixtures where
 
 import Control.Monad.Bayes.Class (MonadDistribution)
-import Control.Monad.Bayes.Inference.MCMC
+import Control.Monad.Bayes.Inference.MCMC.Config
 import Control.Monad.Bayes.Inference.PMMH as PMMH (pmmh)
-import Control.Monad.Bayes.Inference.RMSMC (rmsmc, rmsmcBasic, rmsmcDynamic)
+import Control.Monad.Bayes.Inference.RMSMC (rmsmcStatic, rmsmcBasic, rmsmcDynamic)
 import Control.Monad.Bayes.Inference.SMC
 import Control.Monad.Bayes.Inference.SMC2 as SMC2 (smc2)
 import Control.Monad.Bayes.Population
@@ -34,7 +34,7 @@ runAlgFixed ys SMC = fmap show $ population $ smc SMCConfig {numSteps = t, numPa
 runAlgFixed ys RMSMC =
   fmap show $
     population $
-      rmsmc
+      rmsmcStatic
         MCMCConfig {numMCMCSteps = 10, numBurnIn = 0, proposal = SingleSiteMH}
         SMCConfig {numSteps = t, numParticles = 10, resampler = resampleSystematic}
         (param >>= model ys)

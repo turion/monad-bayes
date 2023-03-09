@@ -19,7 +19,8 @@ module Control.Monad.Bayes.Inference.PMMH
 where
 
 import Control.Monad.Bayes.Class (Bayesian (generative), MonadDistribution, MonadMeasure, prior)
-import Control.Monad.Bayes.Inference.MCMC (MCMCConfig, mcmc)
+import Control.Monad.Bayes.Inference.MCMC.Config (MCMCConfig)
+import Control.Monad.Bayes.Inference.MCMC (mcmc)
 import Control.Monad.Bayes.Inference.SMC (SMCConfig (), smc)
 import Control.Monad.Bayes.Population as Pop
   ( Population,

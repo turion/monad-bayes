@@ -27,7 +27,8 @@ import Control.Monad.Bayes.Class
     MonadMeasure,
   )
 import Control.Monad.Bayes.Density.Free (Density)
-import Control.Monad.Bayes.Traced.Common (Trace (..), TraceT, hoist, mhTransFree, output, runTraceT, scored, singleton, traceT)
+import Control.Monad.Bayes.Traced.Class (HasTraced (..))
+import Control.Monad.Bayes.Traced.Common (Trace (..), TraceT, hoist, mhTransFree, mhTransWithBool, output, runTraceT, scored, singleton, traceT)
 import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans (MonadTrans (..))
 import Data.Functor.Identity (Identity (..))
@@ -58,54 +59,26 @@ instance MonadFactor m => MonadFactor (Traced m) where
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 
-hoistTrace :: (forall x. m x -> m x) -> Traced m a -> Traced m a
-hoistTrace f (Traced (Pair m d)) = Traced (Pair m (hoist f d))
+instance HasTraced Traced where
+  hoistTrace f (Traced (Pair m d)) = Traced (Pair m (hoist f d))
 
--- | Discard the trace and supporting infrastructure.
-marginal :: Monad m => Traced m a -> m a
-marginal = fmap output . runTraceT . traceDist
+  marginal = fmap output . runTraceT . traceDist
 
--- | A single step of the Trace Metropolis-Hastings algorithm.
-mhStep :: MonadDistribution m => Traced m a -> Traced m a
-mhStep (Traced (Pair m d)) = Traced $ Pair m $ traceT $ do
-  aTrace <- runTraceT d
-  runTraceT $ mhTransFree m $ traceT $ Identity aTrace
+  mhStep (Traced (Pair m d)) = Traced $ Pair m $ traceT $ do
+    aTrace <- runTraceT d
+    runTraceT $ mhTransFree m $ traceT $ Identity aTrace
 
--- $setup
--- >>> import Control.Monad.Bayes.Class
--- >>> import Control.Monad.Bayes.Sampler.Strict
--- >>> import Control.Monad.Bayes.Weighted
+  mh n (Traced (Pair m d)) = fmap (map output . NE.toList) (f n)
+    where
+      f k
+        | k <= 0 = fmap (:| []) $ runTraceT d
+        | otherwise = do
+            (x :| xs) <- f (k - 1)
+            y <- runTraceT $ mhTransFree m x
+            return (y :| x : xs)
 
--- | Full run of the Trace Metropolis-Hastings algorithm with a specified
--- number of steps. Newest samples are at the head of the list.
---
--- For example:
---
--- * I have forgotten what day it is.
--- * There are ten buses per hour in the week and three buses per hour at the weekend.
--- * I observe four buses in a given hour.
--- * What is the probability that it is the weekend?
---
--- >>> :{
---  let
---    bus = do x <- bernoulli (2/7)
---             let rate = if x then 3 else 10
---             factor $ poissonPdf rate 4
---             return x
---    mhRunBusSingleObs = do
---      let nSamples = 2
---      sampleIOfixed $ unweighted $ mh nSamples bus
---  in mhRunBusSingleObs
--- :}
--- [True,True,True]
---
--- Of course, it will need to be run more than twice to get a reasonable estimate.
-mh :: MonadDistribution m => Int -> Traced m a -> m [a]
-mh n (Traced (Pair m d)) = fmap (map output . NE.toList) (f n)
-  where
-    f k
-      | k <= 0 = fmap (:| []) $ runTraceT d
-      | otherwise = do
-          (x :| xs) <- f (k - 1)
-          y <- runTraceT $ mhTransFree m x
-          return (y :| x : xs)
+  runMHResult traced = runTraceT (traceDist traced) >>= mhTransWithBool (model traced)
+
+  getTrace = runTraceT . traceDist
+
+  getModel = model
