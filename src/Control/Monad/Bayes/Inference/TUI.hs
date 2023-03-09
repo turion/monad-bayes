@@ -34,6 +34,7 @@ import Pipes (runEffect, (>->))
 import Pipes qualified as P
 import Pipes.Prelude qualified as P
 import Text.Pretty.Simple (pShow, pShowNoColor)
+import Data.Functor.Identity (Identity(runIdentity))
 
 data MCMCData a = MCMCData
   { numSteps :: Int,
@@ -164,8 +165,8 @@ tui burnIn distribution visualizer = void do
                 mcmcdata
                   { numSteps = ns + 1,
                     numSuccesses = nsc + if success a then 1 else 0,
-                    samples = output (trace a) : smples,
-                    lk = exp (ln (probDensity (trace a))) : lk
+                    samples = runIdentity (output (trace a)) : smples,
+                    lk = exp (ln (probDensity (snd $ runIdentity $ runTraceT $ trace a))) : lk
                   }
             )
             (initialState i)

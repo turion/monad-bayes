@@ -1,5 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Static
@@ -29,57 +31,52 @@ import Control.Monad.Bayes.Traced.Common
   ( Trace (..),
     mhTransFree,
     scored,
-    singleton, TraceT,
+    singleton, TraceT, output, traceT,
   )
 import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans (MonadTrans (..))
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
+import Data.Functor.Product (Product (Pair))
+import Control.Monad.Bayes.Traced.Common (hoist, runTraceT)
+import Data.Functor.Identity (Identity(..))
 
 -- | A tracing monad where only a subset of random choices are traced.
 --
 -- The random choices that are not to be traced should be lifted from the
 -- transformed monad.
-data Traced m a = Traced
-  { model :: Weighted (Density m) a,
-    traceDist :: TraceT m a
-  }
+newtype Traced m a = Traced { getTraced :: Product (Weighted (Density m)) (TraceT m) a}
+  deriving newtype (Functor, Applicative, Monad)
 
-instance Monad m => Functor (Traced m) where
-  fmap f (Traced m d) = Traced (fmap f m) (fmap (fmap f) d)
+model :: Traced m a -> Weighted (Density m) a
+model (Traced (Pair model' _)) = model'
 
-instance Monad m => Applicative (Traced m) where
-  pure x = Traced (pure x) (pure (pure x))
-  (Traced mf df) <*> (Traced mx dx) = Traced (mf <*> mx) (liftA2 (<*>) df dx)
+traceDist :: Traced m a -> TraceT m a
+traceDist (Traced (Pair _ traceDist')) = traceDist'
 
-instance Monad m => Monad (Traced m) where
-  (Traced mx dx) >>= f = Traced my dy
-    where
-      my = mx >>= model . f
-      dy = dx `bind` (traceDist . f)
 
 instance MonadTrans Traced where
-  lift m = Traced (lift $ lift m) (fmap pure m)
+  lift m = Traced $ Pair (lift $ lift m) (lift m)
 
 instance MonadDistribution m => MonadDistribution (Traced m) where
-  random = Traced random (fmap singleton random)
+  random = Traced $ Pair random (singleton =<< lift random)
 
 instance MonadFactor m => MonadFactor (Traced m) where
-  score w = Traced (score w) (score w >> pure (scored w))
+  score w = Traced $ Pair (score w) (lift (score w) >> scored w)
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 
 hoistTrace :: (forall x. m x -> m x) -> Traced m a -> Traced m a
-hoistTrace f (Traced m d) = Traced m (f d)
+hoistTrace f (Traced (Pair m d)) = Traced (Pair m (hoist f d))
 
 -- | Discard the trace and supporting infrastructure.
 marginal :: Monad m => Traced m a -> m a
-marginal (Traced _ d) = fmap output d
+marginal = output . traceDist
 
 -- | A single step of the Trace Metropolis-Hastings algorithm.
 mhStep :: MonadDistribution m => Traced m a -> Traced m a
-mhStep (Traced m d) = Traced m d'
-  where
-    d' = d >>= mhTransFree m
+mhStep (Traced (Pair m d)) = Traced $ Pair m $ traceT $ do
+  aTrace <- runTraceT d
+  runTraceT $ mhTransFree m $ traceT $ Identity aTrace
 
 -- $setup
 -- >>> import Control.Monad.Bayes.Class
@@ -111,11 +108,11 @@ mhStep (Traced m d) = Traced m d'
 --
 -- Of course, it will need to be run more than twice to get a reasonable estimate.
 mh :: MonadDistribution m => Int -> Traced m a -> m [a]
-mh n (Traced m d) = fmap (map output . NE.toList) (f n)
+mh n (Traced (Pair m d)) = fmap (map (runIdentity . output) . NE.toList) (f n)
   where
     f k
-      | k <= 0 = fmap (:| []) d
+      | k <= 0 = fmap (:| []) (fmap (traceT . Identity) $ runTraceT d)
       | otherwise = do
         (x :| xs) <- f (k - 1)
-        y <- mhTransFree m x
-        return (y :| x : xs)
+        y <- runTraceT $ mhTransFree m x
+        return (traceT (Identity y) :| x : xs)
