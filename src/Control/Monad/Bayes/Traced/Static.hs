@@ -70,7 +70,7 @@ hoistTrace f (Traced (Pair m d)) = Traced (Pair m (hoist f d))
 
 -- | Discard the trace and supporting infrastructure.
 marginal :: Monad m => Traced m a -> m a
-marginal = output . traceDist
+marginal = fmap output . runTraceT . traceDist
 
 -- | A single step of the Trace Metropolis-Hastings algorithm.
 mhStep :: MonadDistribution m => Traced m a -> Traced m a
@@ -108,7 +108,7 @@ mhStep (Traced (Pair m d)) = Traced $ Pair m $ traceT $ do
 --
 -- Of course, it will need to be run more than twice to get a reasonable estimate.
 mh :: MonadDistribution m => Int -> Traced m a -> m [a]
-mh n (Traced (Pair m d)) = fmap (map (runIdentity . output) . NE.toList) (f n)
+mh n (Traced (Pair m d)) = fmap (map output . NE.toList) (f n)
   where
     f k
       | k <= 0 = fmap (:| []) (fmap (traceT . Identity) $ runTraceT d)

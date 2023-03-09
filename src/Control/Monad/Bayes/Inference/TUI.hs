@@ -164,8 +164,8 @@ tui burnIn distribution visualizer = void do
                 mcmcdata
                   { numSteps = ns + 1,
                     numSuccesses = nsc + if success a then 1 else 0,
-                    samples = runIdentity (output (trace a)) : smples,
-                    lk = exp (ln (probDensity (snd $ runIdentity $ runTraceT $ trace a))) : lk
+                    samples = output (trace a) : smples,
+                    lk = exp (ln (probDensity (trace a))) : lk
                   }
             )
             (initialState i)

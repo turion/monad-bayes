@@ -70,7 +70,7 @@ hoistTrace f (Traced m d) = Traced m (hoist f d)
 
 -- | Discard the trace and supporting infrastructure.
 marginal :: Monad m => Traced m a -> m a
-marginal (Traced _ d) = output d
+marginal (Traced _ d) = output <$> runTraceT d
 
 -- | A single step of the Trace Metropolis-Hastings algorithm.
 mhStep :: MonadDistribution m => Traced m a -> Traced m a
@@ -81,7 +81,7 @@ mhStep (Traced m d) = Traced m $ traceT $ do
 -- | Full run of the Trace Metropolis-Hastings algorithm with a specified
 -- number of steps.
 mh :: MonadDistribution m => Int -> Traced m a -> m [a]
-mh n (Traced m d) = fmap (map (runIdentity . output) . NE.toList) (f n)
+mh n (Traced m d) = fmap (map output . NE.toList) (f n)
   where
     f k
       | k <= 0 = fmap (:| []) $ (traceT . Identity) <$> runTraceT d

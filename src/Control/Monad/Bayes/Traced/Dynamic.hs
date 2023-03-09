@@ -53,7 +53,7 @@ instance Monad m => Monad (Traced m) where
     Pair mx tx <- getCompose cx
     let m = mx >>= pushM . fmap fstProduct . getCompose . runTraced . f
     -- FIXME apply monad law
-    t <- return tx >>= (fmap sndProduct . getCompose . runTraced . f . runIdentity . output)
+    t <- return tx >>= (fmap sndProduct . getCompose . runTraced . f . output)
     return $ Pair m t
 
 instance MonadTrans Traced where
@@ -72,7 +72,7 @@ hoistTrace f (Traced c) = Traced (Compose $ f $ getCompose c)
 
 -- | Discard the trace and supporting infrastructure.
 marginal :: Monad m => Traced m a -> m a
-marginal (Traced c) = runIdentity . output . sndProduct <$> getCompose c
+marginal (Traced c) = output . sndProduct <$> getCompose c
 
 fstProduct :: Product f g a -> f a
 fstProduct (Pair fa _) = fa
@@ -85,7 +85,7 @@ sndProduct (Pair _ ga) = ga
 freeze :: Monad m => Traced m a -> Traced m a
 freeze (Traced c) = Traced $ Compose $ do
   Pair _ t <- getCompose c
-  let x = runIdentity $ output t
+  let x = output t
   return $ Pair (pure x) (pure x)
 
 -- | A single step of the Trace Metropolis-Hastings algorithm.
@@ -108,4 +108,4 @@ mh n (Traced c) = do
           (x :| xs) <- f (k - 1)
           y <- runTraceT $ mhTransFree m x
           return (traceT (Identity y) :| x : xs)
-  fmap (map (runIdentity . output) . NE.toList) (f n)
+  fmap (map output . NE.toList) (f n)
