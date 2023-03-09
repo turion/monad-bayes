@@ -17,7 +17,7 @@ import Control.Monad.Bayes.Traced.Common
   ( MHResult (MHResult, trace),
     Trace (probDensity),
     burnIn,
-    mhTransWithBool,
+    mhTransWithBool, TraceT, runTraceT, traceT,
   )
 import qualified Control.Monad.Bayes.Traced.Dynamic as Dynamic
 import qualified Control.Monad.Bayes.Traced.Static as Static
@@ -25,6 +25,8 @@ import Control.Monad.Bayes.Weighted (Weighted, unweighted)
 import Pipes ((>->))
 import qualified Pipes as P
 import qualified Pipes.Prelude as P
+import Data.Functor.Identity (Identity(..))
+import Data.Functor.Product (Product(..))
 
 data Proposal = SingleSiteMH
 
@@ -43,15 +45,16 @@ mcmcDynamic :: MonadDistribution m => MCMCConfig -> Dynamic.Traced (Weighted m) 
 mcmcDynamic (MCMCConfig {..}) m = burnIn numBurnIn $ unweighted $ Dynamic.mh numMCMCSteps m
 
 -- -- | draw iid samples until you get one that has non-zero likelihood
-independentSamples :: Monad m => Static.Traced m a -> P.Producer (MHResult a) m (Trace a)
-independentSamples (Static.Traced _w d) =
-  P.repeatM d
-    >-> P.takeWhile' ((== 0) . probDensity)
+independentSamples :: Monad m => Static.Traced m a -> P.Producer (MHResult a) m (TraceT Identity a)
+independentSamples (Static.Traced (Pair _w d)) =
+  P.repeatM (runTraceT d)
+    >-> P.map (traceT . Identity)
+    >-> P.takeWhile' ((== 0) . probDensity . snd . runIdentity . runTraceT)
     >-> P.map (MHResult False)
 
 -- | convert a probabilistic program into a producer of samples
 mcmcP :: MonadDistribution m => MCMCConfig -> Static.Traced m a -> P.Producer (MHResult a) m ()
-mcmcP MCMCConfig {..} m@(Static.Traced w _) = do
+mcmcP MCMCConfig {..} m@(Static.Traced (Pair w _)) = do
   initialValue <- independentSamples m >-> P.drain
   ( P.unfoldr (fmap (Right . (\k -> (k, trace k))) . mhTransWithBool w) initialValue
       >-> P.drop numBurnIn

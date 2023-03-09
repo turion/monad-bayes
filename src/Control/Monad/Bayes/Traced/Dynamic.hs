@@ -1,4 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Dynamic
@@ -29,83 +31,81 @@ import Control.Monad.Bayes.Traced.Common
   ( Trace (..),
     mhTransFree,
     scored,
-    singleton, TraceT,
+    singleton, TraceT, output, runTraceT, traceT,
   )
 import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans (MonadTrans (..))
 import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
-import Data.Functor.Identity (Identity)
+import Data.Functor.Identity (Identity (..))
+import Data.Functor.Compose ( Compose(..) )
+import Data.Functor.Product ( Product(..) )
 
 -- | A tracing monad where only a subset of random choices are traced and this
 -- subset can be adjusted dynamically.
-newtype Traced m a = Traced {runTraced :: m (Weighted (Density m) a, TraceT Identity a)}
+newtype Traced m a = Traced {runTraced :: Compose m (Product (Weighted (Density m)) (TraceT Identity)) a}
+  deriving newtype (Functor, Applicative)
 
 pushM :: Monad m => m (Weighted (Density m) a) -> Weighted (Density m) a
 pushM = join . lift . lift
 
-instance Monad m => Functor (Traced m) where
-  fmap f (Traced c) = Traced $ do
-    (m, t) <- c
-    let m' = fmap f m
-    let t' = fmap f t
-    return (m', t')
-
-instance Monad m => Applicative (Traced m) where
-  pure x = Traced $ pure (pure x, pure x)
-  (Traced cf) <*> (Traced cx) = Traced $ do
-    (mf, tf) <- cf
-    (mx, tx) <- cx
-    return (mf <*> mx, tf <*> tx)
-
 instance Monad m => Monad (Traced m) where
-  (Traced cx) >>= f = Traced $ do
-    (mx, tx) <- cx
-    let m = mx >>= pushM . fmap fst . runTraced . f
-    t <- return tx >>= (fmap snd . runTraced . f)
-    return (m, t)
+  Traced cx >>= f = Traced $ Compose $ do
+    Pair mx tx <- getCompose cx
+    let m = mx >>= pushM . fmap fstProduct . getCompose . runTraced . f
+    -- FIXME apply monad law
+    t <- return tx >>= (fmap sndProduct . getCompose . runTraced . f . runIdentity . output)
+    return $ Pair m t
 
 instance MonadTrans Traced where
-  lift m = Traced $ fmap ((,) (lift $ lift m) . pure) m
+  lift m = Traced $ Compose $ fmap (Pair (lift $ lift m) . pure) m
 
 instance MonadDistribution m => MonadDistribution (Traced m) where
-  random = Traced $ fmap ((,) random . singleton) random
+  random = Traced $ Compose $ fmap (Pair random . singleton) random
 
 instance MonadFactor m => MonadFactor (Traced m) where
-  score w = Traced $ fmap (score w,) (score w >> pure (scored w))
+  score w = Traced $ Compose $ fmap (Pair (score w)) (score w >> pure (scored w))
 
 instance MonadMeasure m => MonadMeasure (Traced m)
 
 hoistTrace :: (forall x. m x -> m x) -> Traced m a -> Traced m a
-hoistTrace f (Traced c) = Traced (f c)
+hoistTrace f (Traced c) = Traced (Compose $ f $ getCompose c)
 
 -- | Discard the trace and supporting infrastructure.
 marginal :: Monad m => Traced m a -> m a
-marginal (Traced c) = fmap (output . snd) c
+marginal (Traced c) = runIdentity . output . sndProduct <$> getCompose c
+
+fstProduct :: Product f g a -> f a
+fstProduct (Pair fa _) = fa
+
+sndProduct :: Product f g a -> g a
+sndProduct (Pair _ ga) = ga
 
 -- | Freeze all traced random choices to their current values and stop tracing
 -- them.
 freeze :: Monad m => Traced m a -> Traced m a
-freeze (Traced c) = Traced $ do
-  (_, t) <- c
-  let x = output t
-  return (return x, pure x)
+freeze (Traced c) = Traced $ Compose $ do
+  Pair _ t <- getCompose c
+  let x = runIdentity $ output t
+  return $ Pair (pure x) (pure x)
 
 -- | A single step of the Trace Metropolis-Hastings algorithm.
 mhStep :: MonadDistribution m => Traced m a -> Traced m a
-mhStep (Traced c) = Traced $ do
-  (m, t) <- c
-  t' <- mhTransFree m t
-  return (m, t')
+mhStep (Traced c) = Traced $ Compose $ do
+  Pair m t <- getCompose c
+  t' <- runTraceT $ mhTransFree m t
+  return $ Pair m $ traceT $ Identity t'
+
+-- FIXME Move this f into Common everywhere
 
 -- | Full run of the Trace Metropolis-Hastings algorithm with a specified
 -- number of steps.
 mh :: MonadDistribution m => Int -> Traced m a -> m [a]
 mh n (Traced c) = do
-  (m, t) <- c
+  Pair m t <- getCompose c
   let f k
         | k <= 0 = return (t :| [])
         | otherwise = do
           (x :| xs) <- f (k - 1)
-          y <- mhTransFree m x
-          return (y :| x : xs)
-  fmap (map output . NE.toList) (f n)
+          y <- runTraceT $ mhTransFree m x
+          return (traceT (Identity y) :| x : xs)
+  fmap (map (runIdentity . output) . NE.toList) (f n)
