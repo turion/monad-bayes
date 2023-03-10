@@ -51,6 +51,7 @@ import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
 import Control.Monad.Trans.Class (MonadTrans)
 import GHC.Generics
 import Data.Semigroup.Generic (GenericSemigroupMonoid(..))
+import Data.Monoid (Product (..))
 
 data MHResult a = MHResult
   { success :: Bool,
@@ -62,7 +63,7 @@ data TraceData = TraceData
   { -- | Sequence of random variables sampler during the program's execution.
     variablesTD :: [Double],
     -- | The probability of observing this particular sequence.
-    probDensityTD :: Log Double
+    probDensityTD :: Product (Log Double)
   }
   deriving Generic
   deriving (Semigroup, Monoid) via (GenericSemigroupMonoid TraceData)
@@ -78,7 +79,7 @@ variables = variablesTD . traceData
 
 -- | The probability of observing this particular sequence.
 probDensity :: Trace a -> Log Double
-probDensity = probDensityTD . traceData
+probDensity = getProduct . probDensityTD . traceData
 
 newtype TraceT m a = TraceT {getTraceT :: WriterT TraceData m a}
   deriving (Functor, Applicative, Monad, MonadTrans)
@@ -100,7 +101,7 @@ singleton u = TraceT $ WriterT $ pure (u, TraceData {variablesTD = [u], probDens
 
 -- FIXME Shouldn't we rather implement MonadFactor?
 scored :: Applicative m => Log Double -> TraceT m ()
-scored w = TraceT $ WriterT $ pure ((), TraceData {variablesTD = [], probDensityTD = w})
+scored w = TraceT $ WriterT $ pure ((), TraceData {variablesTD = [], probDensityTD = Product w})
 
 -- FIXME Note: This is more like Gibbs sampling
 -- Note: We don't do a small step, but an arbitrarily big step in a parameter dimension. Why does this even work? It's probably not called Metropolis-Hastings?
@@ -117,9 +118,9 @@ mhTrans m trace = TraceT $ WriterT $ do
         (xs, _ : ys) -> xs ++ (u' : ys)
         _ -> error "impossible"
   ((b, q), vs) <- State.density (weighted m) us'
-  let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (p * fromIntegral (length vs)))
+  let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (getProduct p * fromIntegral (length vs)))
   accept <- bernoulli ratio
-  pure if accept then (b, TraceData vs q) else (a, t)
+  pure if accept then (b, TraceData vs $ Product q) else (a, t)
 
 mhTransFree :: MonadDistribution m => Weighted (Free.Density m) a -> Trace a -> TraceT m a
 mhTransFree m t = TraceT . WriterT $ runIdentity . runWriterT . getTraceT . trace <$> mhTransWithBool m t
@@ -136,9 +137,9 @@ mhTransWithBool m trace = do
         (xs, _ : ys) -> xs ++ (u' : ys)
         _ -> error "mhTransWithBool: impossible"
   ((b, q), vs) <- runWriterT $ weighted $ Weighted.hoist (WriterT . Free.density us') m
-  let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (p * fromIntegral (length vs)))
+  let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (getProduct p * fromIntegral (length vs)))
   success <- bernoulli ratio
-  let trace = TraceT $ WriterT $ pure if success then (b, TraceData vs q) else (a, t)
+  let trace = TraceT $ WriterT $ pure if success then (b, TraceData vs $ Product q) else (a, t)
   return MHResult {success, trace}
 
 -- | A variant of 'mhTrans' with an external sampling monad.
