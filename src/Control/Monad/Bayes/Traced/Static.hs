@@ -104,8 +104,8 @@ mh :: MonadDistribution m => Int -> Traced m a -> m [a]
 mh n (Traced (Pair m d)) = fmap (map output . NE.toList) (f n)
   where
     f k
-      | k <= 0 = fmap (:| []) (fmap (traceT . Identity) $ runTraceT d)
+      | k <= 0 = fmap (:| []) $ runTraceT d
       | otherwise = do
-        (x :| xs) <- f (k - 1)
-        y <- runTraceT $ mhTransFree m x
-        return (traceT (Identity y) :| x : xs)
+          (x :| xs) <- f (k - 1)
+          y <- runTraceT $ mhTransFree m x
+          return (y :| x : xs)
