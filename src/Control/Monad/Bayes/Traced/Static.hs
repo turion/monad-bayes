@@ -1,7 +1,7 @@
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Static
@@ -27,24 +27,18 @@ import Control.Monad.Bayes.Class
     MonadMeasure,
   )
 import Control.Monad.Bayes.Density.Free (Density)
-import Control.Monad.Bayes.Traced.Common
-  ( Trace (..),
-    mhTransFree,
-    scored,
-    singleton, TraceT, output, traceT,
-  )
+import Control.Monad.Bayes.Traced.Common (Trace (..), TraceT, hoist, mhTransFree, output, runTraceT, scored, singleton, traceT)
 import Control.Monad.Bayes.Weighted (Weighted)
 import Control.Monad.Trans (MonadTrans (..))
-import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
+import Data.Functor.Identity (Identity (..))
 import Data.Functor.Product (Product (Pair))
-import Control.Monad.Bayes.Traced.Common (hoist, runTraceT)
-import Data.Functor.Identity (Identity(..))
+import Data.List.NonEmpty as NE (NonEmpty ((:|)), toList)
 
 -- | A tracing monad where only a subset of random choices are traced.
 --
 -- The random choices that are not to be traced should be lifted from the
 -- transformed monad.
-newtype Traced m a = Traced { getTraced :: Product (Weighted (Density m)) (TraceT m) a}
+newtype Traced m a = Traced {getTraced :: Product (Weighted (Density m)) (TraceT m) a}
   deriving newtype (Functor, Applicative, Monad)
 
 model :: Traced m a -> Weighted (Density m) a
@@ -52,7 +46,6 @@ model (Traced (Pair model' _)) = model'
 
 traceDist :: Traced m a -> TraceT m a
 traceDist (Traced (Pair _ traceDist')) = traceDist'
-
 
 instance MonadTrans Traced where
   lift m = Traced $ Pair (lift $ lift m) (lift m)

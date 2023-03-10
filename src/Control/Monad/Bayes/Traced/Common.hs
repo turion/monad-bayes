@@ -1,9 +1,9 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 -- |
 -- Module      : Control.Monad.Bayes.Traced.Common
@@ -44,14 +44,14 @@ import Control.Monad.Bayes.Weighted
     weighted,
   )
 import Control.Monad.Bayes.Weighted qualified as Weighted
+import Control.Monad.Trans.Class (MonadTrans)
 import Control.Monad.Writer (WriterT (WriterT, runWriterT), runWriter)
 import Data.Functor.Identity (Identity (..))
+import Data.Monoid (Product (..))
+import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
+import GHC.Generics
 import Numeric.Log (Log, ln)
 import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
-import Control.Monad.Trans.Class (MonadTrans)
-import GHC.Generics
-import Data.Semigroup.Generic (GenericSemigroupMonoid(..))
-import Data.Monoid (Product (..))
 
 data MHResult a = MHResult
   { success :: Bool,
@@ -65,7 +65,7 @@ data TraceData = TraceData
     -- | The probability of observing this particular sequence.
     probDensityTD :: Product (Log Double)
   }
-  deriving Generic
+  deriving (Generic)
   deriving (Semigroup, Monoid) via (GenericSemigroupMonoid TraceData)
 
 type Trace a = TraceT Identity a
