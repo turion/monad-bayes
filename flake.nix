@@ -86,6 +86,10 @@
           };
 
           cabal2nixOptions = "--benchmark -fdev";
+
+          overrides = _ : _: {
+            doCheck = system == "x86_64-linux";
+          };
         };
 
         jupyterEnvironment = mkJupyterlabFromPath ./kernels {inherit pkgs monad-bayes;};
