@@ -52,6 +52,7 @@ import Data.Semigroup.Generic (GenericSemigroupMonoid (..))
 import GHC.Generics
 import Numeric.Log (Log, ln)
 import Statistics.Distribution.DiscreteUniform (discreteUniformAB)
+import Text.Printf (printf)
 
 data MHResult a = MHResult
   { success :: Bool,
@@ -135,7 +136,7 @@ mhTransWithBool m trace = do
   u' <- random
   let us' = case splitAt i us of
         (xs, _ : ys) -> xs ++ (u' : ys)
-        _ -> error "mhTransWithBool: impossible"
+        _ -> error $ printf "mhTransWithBool: impossible (n = %d, i = %d)" n i
   ((b, q), vs) <- runWriterT $ weighted $ Weighted.hoist (WriterT . Free.density us') m
   let ratio = (exp . ln) $ min 1 (q * fromIntegral n / (getProduct p * fromIntegral (length vs)))
   success <- bernoulli ratio
