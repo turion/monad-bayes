@@ -57,6 +57,7 @@ start :: MonadDistribution m => m Int
 start = uniformD [0, 1, 2]
 
 -- | Example HMM from http://dl.acm.org/citation.cfm?id=2804317
+-- FIXME See https://mlg.eng.cam.ac.uk/pub/pdf/SciGhaGor15.pdf. Does the fixture make sense like this?
 hmm :: (MonadMeasure m) => [Double] -> m [Int]
 hmm dataset = f dataset (const . return)
   where
