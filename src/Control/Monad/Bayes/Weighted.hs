@@ -46,7 +46,8 @@ instance Monad m => MonadFactor (Weighted m) where
 instance MonadDistribution m => MonadMeasure (Weighted m)
 
 instance MonadObserve m => MonadObserve (Weighted m) where
-  observe a action = withWeight $ observe a $ fmap (\((a, b), p) -> (a, (b, p))) $ runWeighted action
+  observe a action = withWeight $ fmap _ $ observe a $ fmap _ $ runWeighted action
+  -- observe a action = withWeight $ observe a $ fmap (\((a, b), p) -> (a, (b, p))) $ runWeighted action
 
 -- | Obtain an explicit value of the likelihood for a given value.
 weighted, runWeighted :: Weighted m a -> m (a, Log Double)

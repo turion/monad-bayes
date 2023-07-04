@@ -59,6 +59,7 @@ module Control.Monad.Bayes.Class
     normalPdf,
     MonadObserve,
     observe,
+    -- observe',
     Bayesian (..),
     poissonPdf,
     posterior,
@@ -269,12 +270,22 @@ factor = score
 -- @
 class MonadFactor m => MonadObserve m where
   -- | Condition on the assumption that a random value produced a certain sample
+  -- observe ::
+  --   Eq a =>
+  --   -- | The data produced
+  --   a ->
+  --   -- | The random observation, producing data and other auxiliary output
+  --   m (a, b) ->
+  --   m b
+
+  -- | Condition on the assumption that a random value produced a certain sample
   observe ::
+    Eq a =>
     -- | The data produced
     a ->
-    -- | The random observation, producing data and other auxiliary output
-    m (a, b) ->
-    m b
+    -- | The random observation
+    m a ->
+    m ()
 
 -- | Type synonym for random values that can be interpreted in any 'MonadDistribution'.
 --   Useful for pretty type signatures. But note that Markov kernels aren't represented by @a -> Distribution b@:

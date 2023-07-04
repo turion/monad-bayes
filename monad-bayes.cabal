@@ -40,6 +40,7 @@ library
     Control.Monad.Bayes.Density.Free
     Control.Monad.Bayes.Density.State
     Control.Monad.Bayes.Enumerator
+    Control.Monad.Bayes.Formal
     Control.Monad.Bayes.Inference.Lazy.MH
     Control.Monad.Bayes.Inference.Lazy.WIS
     Control.Monad.Bayes.Inference.MCMC
