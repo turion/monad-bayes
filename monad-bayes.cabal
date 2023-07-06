@@ -181,6 +181,7 @@ test-suite monad-bayes-test
     , containers
     , foldl
     , hspec
+    , HUnit
     , ieee754
     , lens
     , linear

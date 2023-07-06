@@ -1,10 +1,14 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 module Control.Monad.Bayes.DelayedSampling where
 
+import Control.Applicative (asum)
+import Control.Arrow (first, second)
+import Control.Monad (forM_, unless, void, (>=>))
 import Control.Monad.Bayes.Class hiding (Distribution)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class
@@ -12,21 +16,44 @@ import Control.Monad.Trans.Except
 import Control.Monad.Trans.State.Strict
 import Data.List.NonEmpty (unzip)
 import Data.Maybe (fromMaybe)
+import Data.Tuple (swap)
 import Data.Typeable (Typeable, cast)
 import Statistics.Function (square)
+import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (unzip)
-import Data.Tuple (swap)
-import Control.Arrow (first)
 
-newtype Variable a = Variable Int
+newtype Variable a = Variable {getVariable :: Int}
   deriving (Show, Eq)
+
+data SomeVariable = forall a. (Typeable a, Eq a, Show a) => SomeVariable {getSomeVariable :: Variable a}
+
+deriving instance Show SomeVariable
+
+instance Eq SomeVariable where
+  SomeVariable var1 == SomeVariable var2 = maybe False (== var1) $ cast var2
 
 -- FIXME do I need const here and realized later? Or can I get away with only variables?
 -- I probably need const here still in order to deal with a num instance for value
 -- Would be nice to have Functor & Applicative, but that is hard because we also need typeable
+-- FIXME It would be great if I could get some kind of HOAS going here so I don't need to look up and rename variables all the time
 data Value a where
-  Var :: Variable a -> Value a
+  Var :: (Typeable a, Eq a, Show a) => Variable a -> Value a
   Const :: a -> Value a
+
+class Subst f where
+  subst :: Variable a -> a -> f b -> f b
+
+instance Subst Value where
+  -- FIXME I don't know better than unsafeCoerce here. Is there no type safe way to do this?
+  subst (Variable i) a (Var (Variable i')) | i == i' = Const $ unsafeCoerce a
+  subst _ _ value = value
+
+class GetParents f where
+  getParents :: f a -> [SomeVariable]
+
+instance GetParents Value where
+  getParents (Var var) = [SomeVariable var]
+  getParents (Const _) = []
 
 deriving instance Show a => Show (Value a)
 
@@ -40,17 +67,28 @@ data Distribution a where
   Normal :: Value Double -> Value Double -> Distribution Double
   Beta :: Value Double -> Value Double -> Distribution Double
 
+-- FIXME syb?
+instance Subst Distribution where
+  subst v a (Normal val1 val2) = Normal (subst v a val1) (subst v a val2)
+  subst v a (Beta val1 val2) = Beta (subst v a val1) (subst v a val2)
+
 deriving instance Show (Distribution a)
 
 deriving instance Eq (Distribution a)
 
 pdf :: MonadDistribution m => Distribution a -> a -> DelayedSamplingT m (Log Double)
-pdf (Normal mean stdDev) a = do
-  meanValue <- sample mean
-  stdDevValue <- sample stdDev
-  return $ normalPdf meanValue stdDevValue a
-pdf (Beta _alpha _beta) _ = error "Not implemented beta distribution pdf yet"
+pdf (Normal (Const mean) (Const variance)) a = do
+  return $ normalPdf mean (sqrt variance) a
+pdf (Beta _alpha _beta) _ = throw NotImplemented
+pdf _ _ = throw NotMarginal
 
+instance GetParents Distribution where
+  getParents (Normal val1 val2) = getParents val1 ++ getParents val2
+  getParents (Beta val1 val2) = getParents val1 ++ getParents val2
+
+-- FIXME If I understand it correctly, marginal distributions never have dependencies on variables.
+-- If that is right, there ought to be a type tag in Distribution saying which kind of values can occur,
+-- and a function marginalize that makes a marginal distribution by removing these dependencies.
 data Node a
   = Initialized
       { initialDistribution :: Distribution a,
@@ -59,7 +97,42 @@ data Node a
   | Realized a
   deriving (Show, Eq)
 
+instance Subst Node where
+  subst var a Initialized {initialDistribution, marginalDistribution} =
+    Initialized
+      { initialDistribution = subst var a initialDistribution,
+        -- FIXME if initialDistribution had a substitution, marginalDistribution shouldn't have one.
+        -- Need to marginalize instead, which in fact only copies the initialDistribution with the removal.
+        -- In fact, original algo doesn't require a substitution in initialDistribution, only in marginalDistribution.
+        marginalDistribution = subst var a <$> marginalDistribution
+      }
+  subst _ _ node@(Realized _) = node
+
+instance GetParents Node where
+  getParents Initialized {initialDistribution} = getParents initialDistribution
+  getParents (Realized _) = []
+
+currentDistribution :: Node a -> Maybe (Distribution a)
+currentDistribution Initialized {initialDistribution, marginalDistribution} = Just $ fromMaybe initialDistribution marginalDistribution
+currentDistribution (Realized _) = Nothing
+
+-- FIXME syb?
+-- FIXME this is not entirely true: if it's a variable which resolves to a realized node, it's also terminal.
+-- So I have to make sure when realizing a node that I replace all occurrences of its variable with the value.
+-- In fact, one could delete the realized node from the graph.
+-- Else, I could make this here a Distribution a -> DelayedSamplingT m Bool and lookup every time
+isTerminalDistribution :: Distribution a -> Bool
+isTerminalDistribution (Normal (Const _) (Const _)) = True
+isTerminalDistribution (Beta (Const _) (Const _)) = True
+isTerminalDistribution _ = False
+
 data SomeNode = forall a. (Eq a, Show a, Typeable a) => SomeNode {getSomeNode :: Node a}
+
+substSome :: Variable a -> a -> SomeNode -> SomeNode
+substSome v a SomeNode {getSomeNode} = SomeNode $ subst v a getSomeNode
+
+getParentsSome :: SomeNode -> [SomeVariable]
+getParentsSome SomeNode {getSomeNode} = getParents getSomeNode
 
 deriving instance Show SomeNode
 
@@ -75,16 +148,71 @@ newtype Graph = Graph {getGraph :: [SomeNode]}
 empty :: Graph
 empty = Graph []
 
+checkEveryNode :: (forall a. Node a -> Maybe b) -> Graph -> Maybe (Int, b)
+checkEveryNode f = asum . fmap (\(n, SomeNode {getSomeNode}) -> (n,) <$> f getSomeNode) . zip [0 ..] . getGraph
+
+atMostOneParent :: Graph -> Maybe (Int, [SomeVariable])
+atMostOneParent = checkEveryNode atMostOneParentNode
+  where
+    atMostOneParentNode :: Node a -> Maybe [SomeVariable]
+    atMostOneParentNode = currentDistribution >=> atMostOneParentDistribution
+
+    atMostOneParentDistribution :: Distribution a -> Maybe [SomeVariable]
+    atMostOneParentDistribution (Normal (Var var1) (Var var2)) = Just [SomeVariable var1, SomeVariable var2]
+    atMostOneParentDistribution (Beta (Var var1) (Var var2)) = Just [SomeVariable var1, SomeVariable var2]
+    atMostOneParentDistribution _ = Nothing
+
+data ResolvedVariable = forall a.
+  (Typeable a, Show a, Eq a) =>
+  ResolvedVariable
+  { variable :: Variable a,
+    node :: Node a
+  }
+
+deriving instance Show ResolvedVariable
+
+instance Eq ResolvedVariable where
+  ResolvedVariable var1 _ == ResolvedVariable var2 _ = getVariable var1 == getVariable var2
+
+resolve :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m ResolvedVariable
+resolve variable = do
+  node <- lookupVar variable
+  pure ResolvedVariable {variable, node}
+
+unsafeResolvedVariable :: Int -> SomeNode -> ResolvedVariable
+unsafeResolvedVariable i SomeNode {getSomeNode} =
+  ResolvedVariable
+    { variable = Variable i,
+      node = getSomeNode
+    }
+
 -- FIXME should be variable, not Int
 data Error
   = IndexOutOfBounds Int
   | TypesInconsistent Int
-  | AlreadyRealized Int
+  | AlreadyRealized ResolvedVariable
+  | NotMarginal
+  | HasMarginalizedChildren ResolvedVariable
+  | MultipleParents Int [SomeVariable]
+  | ParentNotMarginalised Int Int -- FIXME need to implement check for that
+  | IncorrectParent Int Int
+  | NoParent ResolvedVariable
+  | UnsupportedConditioning
+  | NotImplemented
   | -- | Only exists for MonadFail
     Fail String
-  deriving (Eq, Show)
 
-newtype DelayedSamplingT m a = DelayedSamplingT {getDelayedSamplingT :: ExceptT Error (StateT Graph m) a}
+data ErrorTrace = ErrorTrace
+  { error_ :: Error,
+    trace :: [String]
+  }
+  deriving (Show, Eq)
+
+deriving instance Eq Error
+
+deriving instance Show Error
+
+newtype DelayedSamplingT m a = DelayedSamplingT {getDelayedSamplingT :: ExceptT ErrorTrace (StateT Graph m) a}
   deriving (Functor, Applicative, Monad, MonadIO)
 
 instance MonadTrans DelayedSamplingT where
@@ -94,19 +222,33 @@ instance Monad m => MonadFail (DelayedSamplingT m) where
   fail = throw . Fail
 
 throw :: Monad m => Error -> DelayedSamplingT m a
-throw = DelayedSamplingT . throwE
+throw = DelayedSamplingT . throwE . flip ErrorTrace []
 
 tryElse :: Monad m => Error -> Maybe a -> DelayedSamplingT m a
 tryElse e = maybe (throw e) return
+
+maybeThrow :: Monad m => Maybe Error -> DelayedSamplingT m ()
+maybeThrow = mapM_ throw
+
+-- FIXME use regularly, at least in tests
+ensureConsistency :: Monad m => DelayedSamplingT m ()
+ensureConsistency = do
+  graph <- DelayedSamplingT $ lift get
+  maybeThrow $ uncurry MultipleParents <$> atMostOneParent graph
+
+addTrace :: Functor m => String -> DelayedSamplingT m a -> DelayedSamplingT m a
+addTrace msg = DelayedSamplingT . withExceptT (\errortrace@ErrorTrace {trace} -> errortrace {trace = msg : trace}) . getDelayedSamplingT
 
 -- FIXME look into lenses
 onNode :: (Monad m, Eq a, Show a, Typeable a) => State (Node a) b -> Variable a -> DelayedSamplingT m b
 onNode action (Variable i) = do
   graph <- DelayedSamplingT $ lift $ gets getGraph
+  -- FIXME should throw type error here if castNode fails
   (graph', bMaybe) <- tryElse (IndexOutOfBounds i) $ modifyListSafe i (unzip . fmap (first SomeNode . swap . runState action) . castNode) graph
   DelayedSamplingT $ lift $ put $ Graph graph'
   tryElse (TypesInconsistent i) bMaybe
-  -- tryElse (TypesInconsistent i) $ castNode someNode
+
+-- tryElse (TypesInconsistent i) $ castNode someNode
 
 lookupVar :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m (Node a)
 lookupVar = onNode get
@@ -119,98 +261,181 @@ modifyListSafe i f as = case splitAt i as of
   (_prefix, []) -> Nothing
   (prefix, a : suffix) -> let (aMaybe, b) = f a in Just (prefix ++ (fromMaybe a aMaybe : suffix), b)
 
--- FIXME name sample?
-interpret :: MonadDistribution m => Node a -> DelayedSamplingT m a
-interpret (Realized value) = return value
-interpret Initialized {initialDistribution, marginalDistribution = Nothing} = interpretDistribution initialDistribution
-interpret Initialized {marginalDistribution = Just distribution} = interpretDistribution distribution
-
-interpretDistribution :: MonadDistribution m => Distribution a -> DelayedSamplingT m a
-interpretDistribution (Normal mean stdDev) = do
-  meanValue <- sample mean
-  stdDevValue <- sample stdDev
-  lift $ normal meanValue stdDevValue
-interpretDistribution (Beta a b) = do
-  aValue <- sample a
-  bValue <- sample b
-  lift $ beta aValue bValue
+getParent :: (Monad m, Eq a, Show a, Typeable a) => Variable a -> DelayedSamplingT m (Maybe SomeVariable)
+getParent var = addTrace "getParent" $ do
+  parents <- flip onNode var $ gets getParents
+  case parents of
+    [] -> pure Nothing
+    [parent] -> pure $ Just parent
+    _ -> throw $ MultipleParents (getVariable var) parents
 
 -- unsafe: doesn't check whether already realized
-realizeAs :: (Typeable a, Monad m, Show a, Eq a) => a -> Variable a -> DelayedSamplingT m ()
-realizeAs a = onNode $ put $ Realized a
+putRealized :: (Typeable a, Monad m, Show a, Eq a) => a -> Variable a -> DelayedSamplingT m ()
+putRealized a var = do
+  onNode (put $ Realized a) var
 
-realize :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> DelayedSamplingT m a
-realize var = do
+-- DelayedSamplingT $ lift $ modify $ Graph . map (substSome var a) . getGraph
+
+-- FIXME also replace all variables in the distributions by the value
+
+-- FIXME possible return type could be DelayedSamplingT m (Distribution a), returning the marginal distribution
+lookupTerminal :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m (Node a)
+lookupTerminal var = addTrace "lookupTerminal" $ do
   node <- lookupVar var
-  result <- interpret node
-  realizeAs result var
-  return result
+  -- Check that all children are not marginalized
+  case node of
+    Initialized {marginalDistribution = Just _} -> do
+      children <- lookupChildren var
+      forM_ children $ \ResolvedVariable {node} -> case node of
+        Initialized {marginalDistribution = Nothing} -> pure ()
+        Initialized {marginalDistribution = Just _} -> throw . HasMarginalizedChildren =<< resolve var
+        (Realized _) -> addTrace "The child is " . throw . AlreadyRealized =<< resolve var
+    Initialized {} -> throw NotMarginal
+    (Realized _) -> throw . AlreadyRealized =<< resolve var
+  -- FIXME it would be great if this had a proof term, i.e. the marginal distribution or whatever is needed for the next function
+  return node
 
--- FIXME name sample?
-sample :: (MonadDistribution m, Typeable a, Show a, Eq a) => Value a -> DelayedSamplingT m a
-sample (Const a) = return a
-sample (Var var) = realize var
+lookupChildren :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m [ResolvedVariable]
+lookupChildren var = do
+  nodes <- DelayedSamplingT $ lift $ gets getGraph
+  pure $ map (uncurry unsafeResolvedVariable) $ filter ((SomeVariable var `elem`) . getParentsSome . snd) $ zip [0 ..] nodes
+
+realize :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> a -> DelayedSamplingT m a
+realize var a = addTrace "realize" $ do
+  Initialized {initialDistribution, marginalDistribution = Just _} <- lookupTerminal var
+  parentMaybe <- getParent var
+  forM_ parentMaybe $ \SomeVariable {getSomeVariable = parentVar} -> do
+    parent <- lookupVar parentVar
+    case parent of
+      Initialized {initialDistribution = parentInitialDist, marginalDistribution = Just parentDist} -> do
+        parentDist' <- conditionDist a initialDistribution parentVar parentDist
+        onNode (put Initialized {initialDistribution = parentInitialDist, marginalDistribution = Just parentDist'}) parentVar
+      -- FIXME Now I should sever the parent/child connection, but I can't do that because I alwas use the initial dist for that.
+      -- Either mutate the initial dist then or change the way how I look up parents
+      Initialized {marginalDistribution = Nothing} -> addTrace "its parent" $ throw NotMarginal
+      Realized _ -> pure ()
+
+  children <- lookupChildren var
+  putRealized a var
+  forM_ children $ \ResolvedVariable {variable} -> marginalize variable
+  return a
+
+marginalize :: (Monad m, Eq a, Show a, Typeable a) => Variable a -> DelayedSamplingT m ()
+marginalize var = addTrace "marginalize" $ do
+  parentMaybe <- getParent var
+  node <- lookupVar var
+  SomeVariable {getSomeVariable = parentVar} <- maybe (throw . NoParent =<< resolve var) pure parentMaybe
+  parent <- lookupVar parentVar
+  case node of
+    Initialized {initialDistribution} -> do
+      marginalDistribution <-
+        Just <$> case parent of
+          Realized b -> pure $ subst parentVar b initialDistribution
+          Initialized {marginalDistribution = Just parentDistribution} -> do
+            marginalizeDistribution initialDistribution parentDistribution
+          Initialized {marginalDistribution = Nothing} -> throw NotMarginal
+      onNode (put node {marginalDistribution}) var
+    Realized _ -> throw . AlreadyRealized =<< resolve var
+
+marginalizeDistribution ::
+  Monad m =>
+  -- | Child distribution
+  Distribution a ->
+  -- | Parent distribution
+  Distribution b ->
+  DelayedSamplingT m (Distribution a)
+marginalizeDistribution (Normal (Var _) (Const variance)) (Normal (Const parentMean) (Const parentVariance)) = pure $ Normal (Const parentMean) (Const $ variance + parentVariance)
+marginalizeDistribution _ _ = throw UnsupportedConditioning
+
+conditionDist :: Monad m => b -> Distribution b -> Variable a -> Distribution a -> DelayedSamplingT m (Distribution a)
+conditionDist b (Normal (Var parentVar') (Const variance)) parentVar (Normal (Const parentMean) (Const parentVariance)) =
+  if parentVar == parentVar'
+    then
+      let precision = 1 / variance + 1 / parentVariance
+          newMean = (b / variance + parentMean / parentVariance) / precision
+       in pure $ Normal (Const newMean) (Const $ 1 / precision)
+    else throw $ IncorrectParent (getVariable parentVar) (getVariable parentVar')
+conditionDist _ _ _ _ = throw UnsupportedConditioning
+
+sample :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> DelayedSamplingT m a
+sample var = addTrace "sample" $ do
+  Initialized {marginalDistribution = Just marginalDistribution} <- lookupTerminal var
+  a <- sampleMarginal marginalDistribution
+  realize var a
+  return a
+
+sampleMarginal :: MonadDistribution m => Distribution a -> DelayedSamplingT m a
+sampleMarginal =
+  addTrace "sampleMarginal" . \case
+    (Normal (Const mu) (Const variance)) -> lift $ normal mu $ sqrt variance
+    (Beta (Const a) (Const b)) -> lift $ beta a b
+    _ -> throw NotMarginal -- FIXME would be good to avoid this type in the first place with the right distribution type
 
 -- sample (Fmap f value) = f <$> sample value
 -- sample (Ap f value) = sample f <*> sample value
 
-runDelayedSamplingT :: Functor m => DelayedSamplingT m a -> m (Either Error a, Graph)
+runDelayedSamplingT :: Functor m => DelayedSamplingT m a -> m (Either ErrorTrace a, Graph)
 runDelayedSamplingT = flip runStateT empty . runExceptT . getDelayedSamplingT
 
-evalDelayedSamplingT :: Functor m => DelayedSamplingT m a -> m (Either Error a)
+evalDelayedSamplingT :: Functor m => DelayedSamplingT m a -> m (Either ErrorTrace a)
 evalDelayedSamplingT = fmap fst . runDelayedSamplingT
 
-newVar :: (Monad m, Typeable a, Show a, Eq a) => Distribution a -> DelayedSamplingT m (Variable a)
-newVar initialDistribution = DelayedSamplingT $ lift $ do
+initialize :: (Monad m, Typeable a, Show a, Eq a) => Distribution a -> DelayedSamplingT m (Variable a)
+initialize initialDistribution = DelayedSamplingT $ lift $ do
   Graph distributions <- get
+  let marginalDistribution = if null $ getParents initialDistribution then Just initialDistribution else Nothing
   -- FIXME this is inefficient
-  put $ Graph $ distributions ++ [SomeNode Initialized {initialDistribution, marginalDistribution = Nothing}]
+  put $ Graph $ distributions ++ [SomeNode Initialized {initialDistribution, marginalDistribution}]
   return $ Variable $ length distributions
 
-normalDS :: Monad m => Value Double -> Value Double -> DelayedSamplingT m (Variable Double)
-normalDS mean stdDev = newVar $ Normal mean stdDev
-
--- FIXME this would be a lot easier if I had a view function that dereferences the variables
+normalDS ::
+  Monad m =>
+  -- | Mean
+  Value Double ->
+  -- | Variance! Not stddev
+  Value Double ->
+  DelayedSamplingT m (Variable Double)
+normalDS mean variance = initialize $ Normal mean variance
 
 -- FIXME I'd like to observe on Value a, but I don't know how to do that with var1 + var2
--- FIXME read the paper again and try to abstract the MARGINALIZE step better
+-- FIXME In the paper, the observe thing has type a -> DelayedSamplingT m a -> DelayedSamplingT m (),
+-- so one doesn't do bad things to the variable. Is this wise or is this extra flexibility ok?
 observe :: (MonadMeasure m, Typeable a, Show a, Eq a) => Variable a -> a -> DelayedSamplingT m ()
-observe variable@(Variable i) a = do
-  node <- lookupVar variable
-  -- FIXME this doesn't yet work if I have realized nodes, those play the same role as Const!
+observe variable a = addTrace "observe" do
+  graft variable
+  Initialized {marginalDistribution = Just marginalDistribution} <- lookupTerminal variable
+  realize variable a
+  p <- pdf marginalDistribution a
+  lift $ score p
+
+graft :: (Monad m, Typeable a, Eq a, Show a, MonadDistribution m) => Variable a -> DelayedSamplingT m ()
+graft var = addTrace "graft" do
+  node <- lookupVar var
   case node of
-    -- FIXME this implements the normal distribution as a single-parameter distribution. But there is an exp. family for the double parameter as well!
-    Initialized {initialDistribution = Normal (Var varMean) stdDev, marginalDistribution = Nothing} -> do
-      -- FIXME this sampling before or after the lookup? in principle they could intertwine, or not? Or is that a topology forbidden by the paper algo?
-      stdDevValue <- sample stdDev
-      meanNode <- lookupVar varMean
-      case meanNode of
-        Initialized { marginalDistribution = Just (Normal (Const priorMean) (Const priorStdDev))} -> do
-        -- FIXME what does the original algorithm do when these are random as well? sample them first? or send further messages down?
-        -- no actually marginalize it first completely!
-          let precision = 1 / sqrt (1 / square stdDevValue + 1 / square priorStdDev)
-              newMean = (a / square stdDevValue + priorMean / square priorStdDev) / precision
-          setMarginalized varMean $ Normal (Const newMean) (Const $ 1 / sqrt precision)
-        Initialized {} -> do
-          _mean <- sample $ Var varMean
-          -- FIXME dirty hack because the recursion over the graph is not yet optimal
-          observe variable a
-        Realized mean -> do
-          -- FIXME dirty hack because I treat Const and Realized differently
-          -- FIXME does this handle stdDev correctly?
-          setMarginalized variable $ Normal (Const mean) stdDev
-          -- FIXME dirty hack because the recursion over the graph is not yet optimal
-          observe variable a
-    Initialized { marginalDistribution = Just distribution } -> do
-      realizeAs a variable
-      p <- pdf distribution a
-      lift $ score p
-    -- FIXME Is this even allowed?
-    Initialized { initialDistribution, marginalDistribution = Nothing } -> do
-      realizeAs a variable
-      p <- pdf initialDistribution a
-      lift $ score p
-    Realized _ -> throw (AlreadyRealized i)
+    Initialized {marginalDistribution = Just _} -> do
+      children <- lookupChildren var
+      forM_ children $ \resolved@ResolvedVariable {node = childNode, variable = childVar} -> case childNode of
+        Initialized {marginalDistribution = Just _} -> prune childVar
+        Initialized {marginalDistribution = Nothing} -> pure ()
+        Realized _ -> addTrace "one of the children while grafting" $ throw $ AlreadyRealized resolved
+    Initialized {marginalDistribution = Nothing} -> do
+      parentMaybe <- getParent var
+      forM_ parentMaybe $ \SomeVariable {getSomeVariable = parentVar} -> graft parentVar
+      marginalize var
+    Realized _ -> throw . AlreadyRealized =<< resolve var
+
+prune :: (Monad m, Typeable a, Eq a, Show a, MonadDistribution m) => Variable a -> DelayedSamplingT m ()
+prune var = addTrace "prune" do
+  node <- lookupVar var
+  case node of
+    Initialized {marginalDistribution = Just _} -> do
+      children <- lookupChildren var
+      forM_ children $ \resolved@ResolvedVariable {node = childNode, variable = childVar} -> case childNode of
+        Initialized {marginalDistribution = Just _} -> prune childVar
+        Initialized {marginalDistribution = Nothing} -> pure ()
+        Realized _ -> addTrace "one of the children while pruning" $ throw $ AlreadyRealized resolved
+    _ -> throw NotMarginal
+  void $ sample var
 
 -- FIXME this is just a step of marginalizing and might have a better name in the paper
 -- FIXME unsafe, doesn't check whether already realized
@@ -219,10 +444,10 @@ setMarginalized variable marginalDistribution = flip onNode variable $ do
   node <- get
   case node of
     Realized _ -> error "Already realized" -- FIXME should really have a local monad with error
-    initialized@Initialized { } -> put initialized { marginalDistribution = Just marginalDistribution }
+    initialized@Initialized {} -> put initialized {marginalDistribution = Just marginalDistribution}
 
 debugGraph :: Monad m => DelayedSamplingT m Graph
 debugGraph = DelayedSamplingT $ lift get
 
 debugGraphIO :: MonadIO m => DelayedSamplingT m ()
-debugGraphIO = DelayedSamplingT $ lift get >>= (liftIO . print)
+debugGraphIO = DelayedSamplingT $ lift (gets getGraph) >>= (liftIO . mapM_ print)
