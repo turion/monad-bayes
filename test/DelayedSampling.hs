@@ -106,7 +106,7 @@ test = describe "DelayedSampling" $ do
         graph2 <- debugGraph
         return (graph1, graph2)
       (graph1, graph2) <- shouldBeRight result
-      snd <$> toAscList (getGraph graph1)
+      snd <$> toAscList (nodes graph1)
         `shouldBe` [ SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Const 0) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 1)}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 0)) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 2)}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 1)) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 3)}},
@@ -114,7 +114,7 @@ test = describe "DelayedSampling" $ do
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 2)) (Const 1), marginalDistribution = Nothing}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 2)) (Const 1), marginalDistribution = Nothing}}
                    ]
-      let nodes2 = snd <$> toAscList (getGraph graph2)
+      let nodes2 = snd <$> toAscList (nodes graph2)
       c <- case nodes2 !! 2 of
         SomeNode {getSomeNode} -> case cast getSomeNode :: Maybe (Node Double) of
           Just (Realized c) -> pure c

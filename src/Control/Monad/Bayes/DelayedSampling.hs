@@ -178,14 +178,20 @@ instance Eq SomeNode where
 castNode :: Typeable a => SomeNode -> Maybe (Node a)
 castNode (SomeNode node) = cast node
 
-newtype Graph = Graph {getGraph :: IntMap SomeNode}
+data Graph = Graph
+  { nodes :: IntMap SomeNode
+  , maxKey :: Int
+  }
   deriving (Show, Eq)
 
+onNodes :: (IntMap SomeNode -> IntMap SomeNode) -> Graph -> Graph
+onNodes f Graph { nodes, maxKey } = Graph { nodes = f nodes, maxKey }
+
 empty :: Graph
-empty = Graph mempty
+empty = Graph mempty 0
 
 checkEveryNode :: (forall a. Node a -> Maybe b) -> Graph -> Maybe (Int, b)
-checkEveryNode f = asum . fmap (\(n, SomeNode {getSomeNode}) -> (n,) <$> f getSomeNode) . IntMap.toAscList . getGraph
+checkEveryNode f = asum . fmap (\(n, SomeNode {getSomeNode}) -> (n,) <$> f getSomeNode) . IntMap.toAscList . nodes
 
 atMostOneParent :: Graph -> Maybe (Int, [SomeVariable])
 atMostOneParent = checkEveryNode atMostOneParentNode
@@ -281,9 +287,9 @@ addTrace msg = DelayedSamplingT . withExceptT (\errortrace@ErrorTrace {trace} ->
 -- FIXME look into lenses
 onNode :: (Monad m, Eq a, Show a, Typeable a) => (StateT (Node a) (Either Error) b) -> Variable a -> DelayedSamplingT m b
 onNode action (Variable i) = do
-  graph <- DelayedSamplingT $ lift $ gets getGraph
+  graph <- DelayedSamplingT $ lift $ gets nodes
   (b, graph') <- except $ getCompose $ IntMap.alterF (Compose . maybe (Left (IndexOutOfBounds i)) (maybe (Left (TypesInconsistent i)) (fmap (fmap (Just . SomeNode)) . runStateT action) . castNode)) i graph
-  DelayedSamplingT $ lift $ put $ Graph graph'
+  DelayedSamplingT $ lift $ modify $ onNodes $ const graph'
   pure b
 
 lookupVar :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m (Node a)
@@ -310,7 +316,7 @@ putRealized :: (Typeable a, Monad m, Show a, Eq a) => a -> Variable a -> Delayed
 putRealized a var = do
   onNode (put $ Realized a) var
 
--- DelayedSamplingT $ lift $ modify $ Graph . map (substSome var a) . getGraph
+-- DelayedSamplingT $ lift $ modify $ Graph . map (substSome var a) . nodes
 
 -- FIXME also replace all variables in the distributions by the value
 
@@ -333,7 +339,7 @@ lookupTerminal var = addTrace "lookupTerminal" $ do
 
 lookupChildren :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m [ResolvedVariable]
 lookupChildren var = do
-  nodes <- DelayedSamplingT $ lift $ gets getGraph
+  nodes <- DelayedSamplingT $ lift $ gets nodes
   pure $ map (uncurry unsafeResolvedVariable) $ filter ((SomeVariable var `elem`) . getParentsSome . snd) $ IntMap.toAscList nodes
 
 realize :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> a -> DelayedSamplingT m a
@@ -430,11 +436,14 @@ evalDelayedSamplingT = fmap fst . runDelayedSamplingT
 
 initialize :: (Monad m, Typeable a, Show a, Eq a) => Distribution a -> DelayedSamplingT m (Variable a)
 initialize initialDistribution = DelayedSamplingT $ lift $ do
-  Graph nodes <- get
+  Graph nodes maxKey <- get
   let marginalDistribution = if null $ getParents initialDistribution then Just initialDistribution else Nothing
-      key = IntMap.size nodes
-  put $ Graph $ IntMap.insert key (SomeNode Initialized {initialDistribution, marginalDistribution}) nodes
-  return $ Variable key
+      maxKey' = maxKey + 1
+  put $ Graph
+    { nodes = IntMap.insert maxKey (SomeNode Initialized {initialDistribution, marginalDistribution}) nodes
+    , maxKey = maxKey'
+    }
+  return $ Variable maxKey
 
 normalDS ::
   Monad m =>
@@ -502,7 +511,7 @@ deallocateRealized var = do
   node <- lookupVar var
   case node of
     Realized a -> do
-      DelayedSamplingT $ lift $ modify $ Graph . IntMap.delete (getVariable var) . (IntMap.map $ substSome var a) . getGraph
+      DelayedSamplingT $ lift $ modify $ onNodes $ IntMap.delete (getVariable var) . (IntMap.map $ substSome var a)
       pure True
     _ -> pure False
 
@@ -510,4 +519,4 @@ debugGraph :: Monad m => DelayedSamplingT m Graph
 debugGraph = DelayedSamplingT $ lift get
 
 debugGraphIO :: MonadIO m => DelayedSamplingT m ()
-debugGraphIO = DelayedSamplingT $ liftIO (putStrLn "Graph:") >> lift (gets getGraph) >>= (liftIO . mapM_ print)
+debugGraphIO = DelayedSamplingT $ liftIO (putStrLn "Graph:") >> lift (gets nodes) >>= (liftIO . mapM_ print)
