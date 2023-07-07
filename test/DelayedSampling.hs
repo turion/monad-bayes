@@ -129,10 +129,10 @@ test = describe "DelayedSampling" $ do
                    ]
 
   describe "Markov chains" $ do
-    it "can measure a 1d particle 100 times and arrive at a precise value" $ do
-      (result, pos) <- (shouldBeRight =<<) $ sampleIO $ do
+    it "can measure a 1d particle 10000 times and arrive at a precise value" $ do
+      result <- (shouldBeRight =<<) $ sampleIO $ do
         pos <- normal 0 1
-        let ts = [0 .. 99 :: Int]
+        let ts = [0 .. 9999 :: Int]
         xs <- forM ts $ \_t -> normal pos 1
         (result, _) <- runWeighted $ evalDelayedSamplingT $ do
           posVar <- normalDS (Const 0) (Const 1)
@@ -143,14 +143,14 @@ test = describe "DelayedSampling" $ do
             pure ()
           sample posVar
         return $ (,pos) <$> result
-      (result, pos) `shouldSatisfy` (\(result, pos) -> abs (result - pos) < 0.2)
+      result `shouldSatisfy` (\(inferred, sampled) -> abs (inferred - sampled) < 5 / sqrt 10000)
 
     it "can reproduce a Kalman filter of a 1d particle" $ do
       result <- (shouldBeRight =<<) $ sampleIO $ do
         -- pos <- normal 0 1 -- FIXME Can't deal with multiple parents yet
         let pos = 0
         vel <- normal 0 1
-        let ts = [0 .. 999]
+        let ts = [0 .. 99999]
         xs <- forM ts $ \t -> normal (pos + vel * t) 1
         (result, _) <- runWeighted $ evalDelayedSamplingT $ do
           -- posVar <- normalDS (Const 0) (Const 1)
@@ -164,4 +164,4 @@ test = describe "DelayedSampling" $ do
             pure ()
           sample velVar
         return $ (,vel) <$> result
-      result `shouldSatisfy` \(inferred, sampled) -> abs (inferred - sampled) < 0.2
+      result `shouldSatisfy` \(inferred, sampled) -> abs (inferred - sampled) < 5 / sqrt 100000
