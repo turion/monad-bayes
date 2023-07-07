@@ -411,12 +411,22 @@ conditionDist b (Normal (Product c parentVar') (Const variance)) parentVar (Norm
     else throw $ IncorrectParent (getVariable parentVar) (getVariable parentVar')
 conditionDist _ childDist _ parentDist = throw $ UnsupportedConditioning (SomeDistribution childDist) (SomeDistribution parentDist)
 
+value :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> DelayedSamplingT m a
+value var = addTrace "value" $ do
+  graft var
+  sample var
+
 sample :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> DelayedSamplingT m a
 sample var = addTrace "sample" $ do
-  Initialized {marginalDistribution = Just marginalDistribution} <- lookupTerminal var
-  a <- sampleMarginal marginalDistribution
-  realize var a
-  return a
+  node <- lookupVar var
+  case node of
+    Realized a -> return a
+    _ -> do
+      -- FIXME It's a bit inefficient to lookup twice
+      Initialized {marginalDistribution = Just marginalDistribution} <- lookupTerminal var
+      a <- sampleMarginal marginalDistribution
+      realize var a
+      return a
 
 sampleMarginal :: MonadDistribution m => Distribution a -> DelayedSamplingT m a
 sampleMarginal =

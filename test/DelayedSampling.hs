@@ -24,11 +24,11 @@ test = describe "DelayedSampling" $ do
     it "can sample" $ do
       val <- (shouldBeRight =<<) $ sampleIO $ evalDelayedSamplingT $ normalDS (Const 0) (Const 1)
       val `shouldBe` val -- Forces and checks whether not NaN
-    it "should not allow to sample the same variable twice" $ do
-      ErrorTrace {error_ = AlreadyRealized (ResolvedVariable {variable})} <- (shouldBeLeft =<<) $ sampleIO $ evalDelayedSamplingT $ do
+    it "sample the same value for the same variable every time" $ do
+      (a, a') <- (shouldBeRight =<<) $ sampleIO $ evalDelayedSamplingT $ do
         a <- normalDS (Const 0) (Const 1)
         (,) <$> sample a <*> sample a
-      variable `shouldBe` Variable 0
+      a `shouldBe` a'
 
     it "samples the same value as a direct draw" $ do
       val1 <- (shouldBeRight =<<) $ sampleIOfixed $ evalDelayedSamplingT $ do
@@ -67,13 +67,13 @@ test = describe "DelayedSampling" $ do
         observe a 1
       p `shouldBe` normalPdf 0 1 1
 
-    it "cannot sample an observed value again" $ do
+    it "sample reproduces observed value" $ do
       (result, _) <- sampleIO $ runWeighted $ evalDelayedSamplingT $ do
         a <- normalDS (Const 0) (Const 1)
         observe a 1
         sample a
-      AlreadyRealized ResolvedVariable {variable} <- error_ <$> shouldBeLeft result
-      getVariable variable `shouldBe` 0
+      a <- shouldBeRight result
+      a `shouldBe` 1
 
     it "throws an error when observing the same variable twice" $ do
       (result, _) <- sampleIO $ runWeighted $ evalDelayedSamplingT $ do
