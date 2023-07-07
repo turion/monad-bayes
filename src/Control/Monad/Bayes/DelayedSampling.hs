@@ -91,12 +91,14 @@ deriving instance Eq a => Eq (Value a)
 -- Or parametrize distribution constructors over a?
 data Distribution a where
   Normal :: Value Double -> Value Double -> Distribution Double
+  Normal2 :: Value (Double, Double) -> Distribution Double
   Beta :: Value Double -> Value Double -> Distribution Double
 
 -- FIXME syb?
 instance Subst Distribution where
   subst v a (Normal val1 val2) = Normal (subst v a val1) (subst v a val2)
   subst v a (Beta val1 val2) = Beta (subst v a val1) (subst v a val2)
+  subst v a (Normal2 val) = Normal2 $ subst v a val
 
 deriving instance Show (Distribution a)
 
@@ -110,6 +112,7 @@ pdf _ _ = throw NotMarginal
 
 instance GetParents Distribution where
   getParents (Normal val1 val2) = getParents val1 ++ getParents val2
+  getParents (Normal2 val) = getParents val
   getParents (Beta val1 val2) = getParents val1 ++ getParents val2
 
 data SomeDistribution = forall a. (Typeable a) => SomeDistribution {getSomeDistribution :: Distribution a}
