@@ -9,6 +9,7 @@ import Control.Monad.Bayes.Weighted (runWeighted)
 import Data.Typeable (cast)
 import Test.HUnit (assertFailure)
 import Test.Hspec
+import Control.Monad (forM, forM_)
 
 shouldBeRight :: Show e => Either e a -> IO a
 shouldBeRight = either (\e -> assertFailure $ "Expected Right, got Left (" ++ show e ++ ")") return
@@ -124,3 +125,37 @@ test = describe "DelayedSampling" $ do
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal ((Var (Variable 2))) (Const 1), marginalDistribution = Just $ Normal (Const c) (Const 1)}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal ((Var (Variable 2))) (Const 1), marginalDistribution = Just $ Normal (Const c) (Const 1)}}
                    ]
+
+
+  describe "Markov chains" $ do
+    it "can measure a 1d particle 100 times and arrive at a precise value" $ do
+      (result, pos) <- (shouldBeRight =<<) $ sampleIO $ do
+        pos <- normal 0 1
+        let ts = [0..99 :: Int]
+        xs <- forM ts $ \_t -> normal pos 1
+        (result, _) <- runWeighted $ evalDelayedSamplingT $ do
+          posVar <- normalDS (Const 0) (Const 1)
+          forM_ xs $ \x -> do
+            flip observe x =<< normalDS (Var posVar) (Const 1)
+          sample posVar
+        return $ (, pos) <$> result
+      (result, pos) `shouldSatisfy` (\(result, pos) -> abs (result - pos) < 0.2)
+
+    it "can reproduce a Kalman filter of a 1d particle" $ do
+      result <- (shouldBeRight =<<) $ sampleIO $ do
+        -- pos <- normal 0 1 -- FIXME Can't deal with multiple parents yet
+        let pos = 0
+        vel <- normal 0 1
+        let ts = [0..999]
+        xs <- forM ts $ \t -> normal (pos + vel * t) 1
+        (result, _) <- runWeighted $ evalDelayedSamplingT $ do
+          -- posVar <- normalDS (Const 0) (Const 1)
+          velVar <- normalDS (Const 0) (Const 1)
+          forM_ (zip ts xs) $ \(t, x) -> do
+            -- let mu = Var posVar + Const t * Var velVar
+            let mu = Const t * Var velVar
+            xVar <- normalDS mu 1
+            observe xVar x
+          sample velVar
+        return $ (, vel) <$> result
+      result `shouldSatisfy` \(inferred, sampled) -> abs (inferred - sampled) < 0.2

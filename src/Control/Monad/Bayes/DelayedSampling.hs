@@ -7,8 +7,8 @@
 module Control.Monad.Bayes.DelayedSampling where
 
 import Control.Applicative (asum)
-import Control.Arrow (first, second)
-import Control.Monad (forM_, unless, void, (>=>))
+import Control.Arrow (first)
+import Control.Monad (forM_, void, (>=>))
 import Control.Monad.Bayes.Class hiding (Distribution)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class
@@ -18,9 +18,9 @@ import Data.List.NonEmpty (unzip)
 import Data.Maybe (fromMaybe)
 import Data.Tuple (swap)
 import Data.Typeable (Typeable, cast)
-import Statistics.Function (square)
 import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (unzip)
+import Statistics.Function (square)
 
 newtype Variable a = Variable {getVariable :: Int}
   deriving (Show, Eq)
@@ -39,6 +39,24 @@ instance Eq SomeVariable where
 data Value a where
   Var :: (Typeable a, Eq a, Show a) => Variable a -> Value a
   Const :: a -> Value a
+  -- FIXME not sure whether I should put numerical expressions here or in the distributions
+  Sum :: (Typeable a, Eq a, Show a) => Variable a -> Value a -> Value a
+  Product :: (Typeable a, Eq a, Show a) => a -> Variable a -> Value a
+
+-- FIXME we could easily implement negate etc. on constants, and fail on variables for now
+instance Num a => Num (Value a) where
+  Var v + value = Sum v value
+  _ + _ = error "Value.+: Not implemented"
+  fromInteger = Const . fromInteger
+  Const a * Var v = Product a v
+  _ * _ = error "Value.*: Not implemented"
+  negate = error "Value.negate: Not implemented"
+  abs = error "Value.abs: Not implemented"
+  signum = error "Value.signum: Not implemented"
+
+instance Fractional a => Fractional (Value a) where
+  fromRational = Const . fromRational
+  (/) = error "Value./: Not implemented"
 
 class Subst f where
   subst :: Variable a -> a -> f b -> f b
@@ -54,6 +72,9 @@ class GetParents f where
 instance GetParents Value where
   getParents (Var var) = [SomeVariable var]
   getParents (Const _) = []
+  -- FIXME I don't know whether this is the right approach. Should expressions have
+  getParents (Sum var val) = SomeVariable var : getParents val
+  getParents (Product _ var) = [SomeVariable var]
 
 deriving instance Show a => Show (Value a)
 
@@ -85,6 +106,12 @@ pdf _ _ = throw NotMarginal
 instance GetParents Distribution where
   getParents (Normal val1 val2) = getParents val1 ++ getParents val2
   getParents (Beta val1 val2) = getParents val1 ++ getParents val2
+
+data SomeDistribution = forall a . (Typeable a) => SomeDistribution {getSomeDistribution :: Distribution a}
+
+deriving instance Show SomeDistribution
+instance Eq SomeDistribution where
+  SomeDistribution dist1 == SomeDistribution dist2 = maybe False (== dist1) $ cast dist2
 
 -- FIXME If I understand it correctly, marginal distributions never have dependencies on variables.
 -- If that is right, there ought to be a type tag in Distribution saying which kind of values can occur,
@@ -187,8 +214,8 @@ unsafeResolvedVariable i SomeNode {getSomeNode} =
     }
 
 -- FIXME should be variable, not Int
-data Error
-  = IndexOutOfBounds Int
+data Error =
+    IndexOutOfBounds Int
   | TypesInconsistent Int
   | AlreadyRealized ResolvedVariable
   | NotMarginal
@@ -197,7 +224,7 @@ data Error
   | ParentNotMarginalised Int Int -- FIXME need to implement check for that
   | IncorrectParent Int Int
   | NoParent ResolvedVariable
-  | UnsupportedConditioning
+  | UnsupportedConditioning SomeDistribution SomeDistribution
   | NotImplemented
   | -- | Only exists for MonadFail
     Fail String
@@ -286,7 +313,7 @@ lookupTerminal var = addTrace "lookupTerminal" $ do
   case node of
     Initialized {marginalDistribution = Just _} -> do
       children <- lookupChildren var
-      forM_ children $ \ResolvedVariable {node} -> case node of
+      forM_ children $ \ResolvedVariable {node = childNode} -> case childNode of
         Initialized {marginalDistribution = Nothing} -> pure ()
         Initialized {marginalDistribution = Just _} -> throw . HasMarginalizedChildren =<< resolve var
         (Realized _) -> addTrace "The child is " . throw . AlreadyRealized =<< resolve var
@@ -337,17 +364,19 @@ marginalize var = addTrace "marginalize" $ do
       onNode (put node {marginalDistribution}) var
     Realized _ -> throw . AlreadyRealized =<< resolve var
 
+-- FIXME I don't check here anymore whether the var is the right one. Should I?
 marginalizeDistribution ::
-  Monad m =>
+  (Monad m, Typeable a, Typeable b) =>
   -- | Child distribution
   Distribution a ->
   -- | Parent distribution
   Distribution b ->
   DelayedSamplingT m (Distribution a)
 marginalizeDistribution (Normal (Var _) (Const variance)) (Normal (Const parentMean) (Const parentVariance)) = pure $ Normal (Const parentMean) (Const $ variance + parentVariance)
-marginalizeDistribution _ _ = throw UnsupportedConditioning
+marginalizeDistribution (Normal (Product c _var) (Const variance)) (Normal (Const parentMean) (Const parentVariance)) = pure $ Normal (Const $ c * parentMean) (Const $ variance + square c * parentVariance)
+marginalizeDistribution childDist parentDist = throw $ UnsupportedConditioning (SomeDistribution childDist) (SomeDistribution parentDist)
 
-conditionDist :: Monad m => b -> Distribution b -> Variable a -> Distribution a -> DelayedSamplingT m (Distribution a)
+conditionDist :: (Monad m, Typeable b, Typeable a) => b -> Distribution b -> Variable a -> Distribution a -> DelayedSamplingT m (Distribution a)
 conditionDist b (Normal (Var parentVar') (Const variance)) parentVar (Normal (Const parentMean) (Const parentVariance)) =
   if parentVar == parentVar'
     then
@@ -355,7 +384,17 @@ conditionDist b (Normal (Var parentVar') (Const variance)) parentVar (Normal (Co
           newMean = (b / variance + parentMean / parentVariance) / precision
        in pure $ Normal (Const newMean) (Const $ 1 / precision)
     else throw $ IncorrectParent (getVariable parentVar) (getVariable parentVar')
-conditionDist _ _ _ _ = throw UnsupportedConditioning
+conditionDist b (Normal (Product c parentVar') (Const variance)) parentVar (Normal (Const parentMean) (Const parentVariance)) =
+  if parentVar == parentVar'
+    then
+      if c == 0
+        then pure (Normal (Const parentMean) (Const parentVariance)) -- FIXME make this a special case of below formula
+        else
+          let precision = 1 / variance + 1 / (square c * parentVariance)
+              newMean = (b / variance + parentMean / (c * parentVariance)) / precision
+          in pure $ Normal (Const $ newMean / c) (Const $ 1 / (square c * precision))
+    else throw $ IncorrectParent (getVariable parentVar) (getVariable parentVar')
+conditionDist _ childDist _ parentDist = throw $ UnsupportedConditioning (SomeDistribution childDist) (SomeDistribution parentDist)
 
 sample :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> DelayedSamplingT m a
 sample var = addTrace "sample" $ do
@@ -450,4 +489,4 @@ debugGraph :: Monad m => DelayedSamplingT m Graph
 debugGraph = DelayedSamplingT $ lift get
 
 debugGraphIO :: MonadIO m => DelayedSamplingT m ()
-debugGraphIO = DelayedSamplingT $ lift (gets getGraph) >>= (liftIO . mapM_ print)
+debugGraphIO = DelayedSamplingT $ liftIO (putStrLn "Graph:") >> lift (gets getGraph) >>= (liftIO . mapM_ print)
