@@ -91,7 +91,19 @@ test = describe "DelayedSampling" $ do
       p `shouldBe` normalPdf 0 (sqrt 3) 1
 
   describe "examples" $ do
-    it "reproduces the example from the paper" $ do
+    describe "table 1" $ do
+      it "reproduces the first program" $ do
+        (result, p) <- sampleIO $ runWeighted $ evalDelayedSamplingT $ do
+          x <- normalDS 0 1
+          y <- normalDS (Var x) 1
+          z <- normalDS (Var y) 1
+          observe z 3
+          -- Have to call value for x since it isn't terminal
+          (,) <$> value x <*> sample y
+        (x, y) <- shouldBeRight result
+        -- FIXME what to test on x and y? Maybe do a few debugGraph and look at them
+        pure ()
+    it "reproduces Figure 2 from the paper" $ do
       (result, _) <- sampleIO $ runWeighted $ evalDelayedSamplingT $ do
         a <- normalDS (Const 0) (Const 1)
         b <- normalDS (Var a) (Const 1)
