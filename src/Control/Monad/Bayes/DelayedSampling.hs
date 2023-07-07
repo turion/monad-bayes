@@ -64,7 +64,12 @@ class Subst f where
 instance Subst Value where
   -- FIXME I don't know better than unsafeCoerce here. Is there no type safe way to do this?
   subst (Variable i) a (Var (Variable i')) | i == i' = Const $ unsafeCoerce a
-  subst _ _ value = value
+  subst _ _ value@(Var _) = value
+  subst _ _ value@(Const _) = value
+  -- FIXME Need to implement more Num patterns for this to work
+  subst (Variable _) _ (Sum (Variable _) _) = error "Not yet implemented"
+  subst (Variable i) a (Product a' (Variable i')) | i == i' = unsafeCoerce $ Const $ unsafeCoerce a * a'
+  subst _ _ value@(Product _ _) = value
 
 class GetParents f where
   getParents :: f a -> [SomeVariable]
@@ -485,6 +490,18 @@ setMarginalized variable marginalDistribution = flip onNode variable $ do
   case node of
     Realized _ -> error "Already realized" -- FIXME should really have a local monad with error
     initialized@Initialized {} -> put initialized {marginalDistribution = Just marginalDistribution}
+
+-- FIXME this should be linear in the variable
+-- | Attempts to remove a realized variable from the graph and substitute/inline its value into all references to it.
+--   Returns its success. (It can fail if it is not realized.)
+deallocateRealized :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m Bool
+deallocateRealized var = do
+  node <- lookupVar var
+  case node of
+    Realized a -> do
+      DelayedSamplingT $ lift $ modify $ Graph . IntMap.delete (getVariable var) . (IntMap.map $ substSome var a) . getGraph
+      pure True
+    _ -> pure False
 
 debugGraph :: Monad m => DelayedSamplingT m Graph
 debugGraph = DelayedSamplingT $ lift get

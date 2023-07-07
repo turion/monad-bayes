@@ -137,7 +137,10 @@ test = describe "DelayedSampling" $ do
         (result, _) <- runWeighted $ evalDelayedSamplingT $ do
           posVar <- normalDS (Const 0) (Const 1)
           forM_ xs $ \x -> do
-            flip observe x =<< normalDS (Var posVar) (Const 1)
+            xVar <- normalDS (Var posVar) (Const 1)
+            observe xVar x
+            True <- deallocateRealized xVar
+            pure ()
           sample posVar
         return $ (,pos) <$> result
       (result, pos) `shouldSatisfy` (\(result, pos) -> abs (result - pos) < 0.2)
@@ -157,6 +160,8 @@ test = describe "DelayedSampling" $ do
             let mu = Const t * Var velVar
             xVar <- normalDS mu 1
             observe xVar x
+            True <- deallocateRealized xVar
+            pure ()
           sample velVar
         return $ (,vel) <$> result
       result `shouldSatisfy` \(inferred, sampled) -> abs (inferred - sampled) < 0.2
