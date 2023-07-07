@@ -41,7 +41,7 @@ data Value a where
   Const :: a -> Value a
   -- FIXME not sure whether I should put numerical expressions here or in the distributions
   Sum :: (Typeable a, Eq a, Show a) => Variable a -> Value a -> Value a
-  Product :: (Typeable a, Eq a, Show a) => a -> Variable a -> Value a
+  Product :: (Typeable a, Eq a, Show a, Num a) => a -> Variable a -> Value a
 
 -- FIXME we could easily implement negate etc. on constants, and fail on variables for now
 instance Num a => Num (Value a) where
