@@ -7,20 +7,20 @@
 module Control.Monad.Bayes.DelayedSampling where
 
 import Control.Applicative (asum)
-import Control.Arrow (first)
 import Control.Monad (forM_, void, (>=>))
 import Control.Monad.Bayes.Class hiding (Distribution)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class
-import Control.Monad.Trans.Except
+import Control.Monad.Trans.Except hiding (except)
 import Control.Monad.Trans.State.Strict
-import Data.List.NonEmpty (unzip)
+import Data.Functor.Compose (Compose (..))
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (fromMaybe)
-import Data.Tuple (swap)
 import Data.Typeable (Typeable, cast)
+import Statistics.Function (square)
 import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (unzip)
-import Statistics.Function (square)
 
 newtype Variable a = Variable {getVariable :: Int}
   deriving (Show, Eq)
@@ -107,9 +107,10 @@ instance GetParents Distribution where
   getParents (Normal val1 val2) = getParents val1 ++ getParents val2
   getParents (Beta val1 val2) = getParents val1 ++ getParents val2
 
-data SomeDistribution = forall a . (Typeable a) => SomeDistribution {getSomeDistribution :: Distribution a}
+data SomeDistribution = forall a. (Typeable a) => SomeDistribution {getSomeDistribution :: Distribution a}
 
 deriving instance Show SomeDistribution
+
 instance Eq SomeDistribution where
   SomeDistribution dist1 == SomeDistribution dist2 = maybe False (== dist1) $ cast dist2
 
@@ -169,14 +170,14 @@ instance Eq SomeNode where
 castNode :: Typeable a => SomeNode -> Maybe (Node a)
 castNode (SomeNode node) = cast node
 
-newtype Graph = Graph {getGraph :: [SomeNode]}
+newtype Graph = Graph {getGraph :: IntMap SomeNode}
   deriving (Show, Eq)
 
 empty :: Graph
-empty = Graph []
+empty = Graph mempty
 
 checkEveryNode :: (forall a. Node a -> Maybe b) -> Graph -> Maybe (Int, b)
-checkEveryNode f = asum . fmap (\(n, SomeNode {getSomeNode}) -> (n,) <$> f getSomeNode) . zip [0 ..] . getGraph
+checkEveryNode f = asum . fmap (\(n, SomeNode {getSomeNode}) -> (n,) <$> f getSomeNode) . IntMap.toAscList . getGraph
 
 atMostOneParent :: Graph -> Maybe (Int, [SomeVariable])
 atMostOneParent = checkEveryNode atMostOneParentNode
@@ -214,8 +215,8 @@ unsafeResolvedVariable i SomeNode {getSomeNode} =
     }
 
 -- FIXME should be variable, not Int
-data Error =
-    IndexOutOfBounds Int
+data Error
+  = IndexOutOfBounds Int
   | TypesInconsistent Int
   | AlreadyRealized ResolvedVariable
   | NotMarginal
@@ -257,6 +258,9 @@ tryElse e = maybe (throw e) return
 maybeThrow :: Monad m => Maybe Error -> DelayedSamplingT m ()
 maybeThrow = mapM_ throw
 
+except :: Monad m => Either Error a -> DelayedSamplingT m a
+except = either throw return
+
 -- FIXME use regularly, at least in tests
 ensureConsistency :: Monad m => DelayedSamplingT m ()
 ensureConsistency = do
@@ -267,15 +271,12 @@ addTrace :: Functor m => String -> DelayedSamplingT m a -> DelayedSamplingT m a
 addTrace msg = DelayedSamplingT . withExceptT (\errortrace@ErrorTrace {trace} -> errortrace {trace = msg : trace}) . getDelayedSamplingT
 
 -- FIXME look into lenses
-onNode :: (Monad m, Eq a, Show a, Typeable a) => State (Node a) b -> Variable a -> DelayedSamplingT m b
+onNode :: (Monad m, Eq a, Show a, Typeable a) => (StateT (Node a) (Either Error) b) -> Variable a -> DelayedSamplingT m b
 onNode action (Variable i) = do
   graph <- DelayedSamplingT $ lift $ gets getGraph
-  -- FIXME should throw type error here if castNode fails
-  (graph', bMaybe) <- tryElse (IndexOutOfBounds i) $ modifyListSafe i (unzip . fmap (first SomeNode . swap . runState action) . castNode) graph
+  (b, graph') <- except $ getCompose $ IntMap.alterF (Compose . maybe (Left (IndexOutOfBounds i)) (maybe (Left (TypesInconsistent i)) (fmap (fmap (Just . SomeNode)) . runStateT action) . castNode)) i graph
   DelayedSamplingT $ lift $ put $ Graph graph'
-  tryElse (TypesInconsistent i) bMaybe
-
--- tryElse (TypesInconsistent i) $ castNode someNode
+  pure b
 
 lookupVar :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m (Node a)
 lookupVar = onNode get
@@ -325,7 +326,7 @@ lookupTerminal var = addTrace "lookupTerminal" $ do
 lookupChildren :: (Monad m, Typeable a, Eq a, Show a) => Variable a -> DelayedSamplingT m [ResolvedVariable]
 lookupChildren var = do
   nodes <- DelayedSamplingT $ lift $ gets getGraph
-  pure $ map (uncurry unsafeResolvedVariable) $ filter ((SomeVariable var `elem`) . getParentsSome . snd) $ zip [0 ..] nodes
+  pure $ map (uncurry unsafeResolvedVariable) $ filter ((SomeVariable var `elem`) . getParentsSome . snd) $ IntMap.toAscList nodes
 
 realize :: (MonadDistribution m, Typeable a, Show a, Eq a) => Variable a -> a -> DelayedSamplingT m a
 realize var a = addTrace "realize" $ do
@@ -392,7 +393,7 @@ conditionDist b (Normal (Product c parentVar') (Const variance)) parentVar (Norm
         else
           let precision = 1 / variance + 1 / (square c * parentVariance)
               newMean = (b / variance + parentMean / (c * parentVariance)) / precision
-          in pure $ Normal (Const $ newMean / c) (Const $ 1 / (square c * precision))
+           in pure $ Normal (Const $ newMean / c) (Const $ 1 / (square c * precision))
     else throw $ IncorrectParent (getVariable parentVar) (getVariable parentVar')
 conditionDist _ childDist _ parentDist = throw $ UnsupportedConditioning (SomeDistribution childDist) (SomeDistribution parentDist)
 
@@ -421,11 +422,11 @@ evalDelayedSamplingT = fmap fst . runDelayedSamplingT
 
 initialize :: (Monad m, Typeable a, Show a, Eq a) => Distribution a -> DelayedSamplingT m (Variable a)
 initialize initialDistribution = DelayedSamplingT $ lift $ do
-  Graph distributions <- get
+  Graph nodes <- get
   let marginalDistribution = if null $ getParents initialDistribution then Just initialDistribution else Nothing
-  -- FIXME this is inefficient
-  put $ Graph $ distributions ++ [SomeNode Initialized {initialDistribution, marginalDistribution}]
-  return $ Variable $ length distributions
+      key = IntMap.size nodes
+  put $ Graph $ IntMap.insert key (SomeNode Initialized {initialDistribution, marginalDistribution}) nodes
+  return $ Variable key
 
 normalDS ::
   Monad m =>

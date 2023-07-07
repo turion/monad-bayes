@@ -2,14 +2,15 @@
 
 module DelayedSampling where
 
+import Control.Monad (forM, forM_)
 import Control.Monad.Bayes.Class
 import Control.Monad.Bayes.DelayedSampling
 import Control.Monad.Bayes.Sampler.Strict
 import Control.Monad.Bayes.Weighted (runWeighted)
+import Data.IntMap (toAscList)
 import Data.Typeable (cast)
 import Test.HUnit (assertFailure)
 import Test.Hspec
-import Control.Monad (forM, forM_)
 
 shouldBeRight :: Show e => Either e a -> IO a
 shouldBeRight = either (\e -> assertFailure $ "Expected Right, got Left (" ++ show e ++ ")") return
@@ -105,7 +106,7 @@ test = describe "DelayedSampling" $ do
         graph2 <- debugGraph
         return (graph1, graph2)
       (graph1, graph2) <- shouldBeRight result
-      getGraph graph1
+      snd <$> toAscList (getGraph graph1)
         `shouldBe` [ SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Const 0) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 1)}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 0)) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 2)}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 1)) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 3)}},
@@ -113,11 +114,12 @@ test = describe "DelayedSampling" $ do
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 2)) (Const 1), marginalDistribution = Nothing}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 2)) (Const 1), marginalDistribution = Nothing}}
                    ]
-      c <- case getGraph graph2 !! 2 of
+      let nodes2 = snd <$> toAscList (getGraph graph2)
+      c <- case nodes2 !! 2 of
         SomeNode {getSomeNode} -> case cast getSomeNode :: Maybe (Node Double) of
           Just (Realized c) -> pure c
           _ -> assertFailure "Was not realized"
-      getGraph graph2
+      nodes2
         `shouldBe` [ SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Const 0) (Const 1), marginalDistribution = Just $ Normal (Const 0) (Const 1)}},
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal (Var (Variable 0)) (Const 1), marginalDistribution = Just $ Normal (Const $ c * 2 / 3) (Const $ 2 / 3)}},
                      SomeNode {getSomeNode = Realized c},
@@ -126,19 +128,18 @@ test = describe "DelayedSampling" $ do
                      SomeNode {getSomeNode = Initialized {initialDistribution = Normal ((Var (Variable 2))) (Const 1), marginalDistribution = Just $ Normal (Const c) (Const 1)}}
                    ]
 
-
   describe "Markov chains" $ do
     it "can measure a 1d particle 100 times and arrive at a precise value" $ do
       (result, pos) <- (shouldBeRight =<<) $ sampleIO $ do
         pos <- normal 0 1
-        let ts = [0..99 :: Int]
+        let ts = [0 .. 99 :: Int]
         xs <- forM ts $ \_t -> normal pos 1
         (result, _) <- runWeighted $ evalDelayedSamplingT $ do
           posVar <- normalDS (Const 0) (Const 1)
           forM_ xs $ \x -> do
             flip observe x =<< normalDS (Var posVar) (Const 1)
           sample posVar
-        return $ (, pos) <$> result
+        return $ (,pos) <$> result
       (result, pos) `shouldSatisfy` (\(result, pos) -> abs (result - pos) < 0.2)
 
     it "can reproduce a Kalman filter of a 1d particle" $ do
@@ -146,7 +147,7 @@ test = describe "DelayedSampling" $ do
         -- pos <- normal 0 1 -- FIXME Can't deal with multiple parents yet
         let pos = 0
         vel <- normal 0 1
-        let ts = [0..999]
+        let ts = [0 .. 999]
         xs <- forM ts $ \t -> normal (pos + vel * t) 1
         (result, _) <- runWeighted $ evalDelayedSamplingT $ do
           -- posVar <- normalDS (Const 0) (Const 1)
@@ -157,5 +158,5 @@ test = describe "DelayedSampling" $ do
             xVar <- normalDS mu 1
             observe xVar x
           sample velVar
-        return $ (, vel) <$> result
+        return $ (,vel) <$> result
       result `shouldSatisfy` \(inferred, sampled) -> abs (inferred - sampled) < 0.2
