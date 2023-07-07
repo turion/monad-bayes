@@ -52,8 +52,7 @@ test = describe "DelayedSampling" $ do
       val1 <- (shouldBeRight =<<) $ sampleIOfixed $ evalDelayedSamplingT $ do
         a <- addTrace "a" $ normalDS (Const 0) (Const 1)
         b <- addTrace "b" $ normalDS (Var a) (Const 1)
-        debugGraphIO
-        (,) <$> addTrace "sample a" (sample a) <*> (debugGraphIO >> addTrace "sample b" (sample b))
+        (,) <$> sample a <*> sample b
       val2 <- sampleIOfixed $ do
         a <- normal 0 1
         b <- normal a 1
