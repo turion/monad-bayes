@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -74,12 +75,13 @@ module Control.Monad.Bayes.Class
   )
 where
 
+import Control.Applicative.List hiding (lift)
+import qualified Control.Applicative.List as ListT
 import Control.Arrow (Arrow (second))
 import Control.Monad (replicateM, when)
 import Control.Monad.Cont (ContT)
 import Control.Monad.Except (ExceptT, lift)
 import Control.Monad.Identity (IdentityT)
-import Control.Monad.List (ListT)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.State (StateT)
 import Control.Monad.Writer (WriterT)
@@ -107,7 +109,7 @@ import Statistics.Distribution.Poisson qualified as Poisson
 import Statistics.Distribution.Uniform (uniformDistr)
 
 -- | Monads that can draw random variables.
-class (Monad m) => MonadDistribution m where
+class MonadDistribution m where
   -- | Draw from a uniform distribution.
   random ::
     -- | \(\sim \mathcal{U}(0, 1)\)
@@ -213,20 +215,27 @@ class (Monad m) => MonadDistribution m where
     v Double ->
     -- | \(\sim \mathrm{Dir}(\mathrm{as})\)
     m (v Double)
+
+  default dirichlet ::
+    (Monad m, Vector v Double) =>
+    -- | concentration parameters @as@
+    v Double ->
+    -- | \(\sim \mathrm{Dir}(\mathrm{as})\)
+    m (v Double)
   dirichlet as = do
     xs <- VG.mapM (`gamma` 1) as
     let s = VG.sum xs
     let ys = VG.map (/ s) xs
-    return ys
+    pure ys
 
 -- | Draw from a continuous distribution using the inverse cumulative density
 -- function.
-draw :: (ContDistr d, MonadDistribution m) => d -> m Double
+draw :: (Functor m, ContDistr d, MonadDistribution m) => d -> m Double
 draw d = fmap (quantile d) random
 
 -- | Draw from a discrete distribution using a sequence of draws from
 -- Bernoulli.
-fromPMF :: (MonadDistribution m) => (Int -> Double) -> m Int
+fromPMF :: (Monad m, (MonadDistribution m)) => (Int -> Double) -> m Int
 fromPMF p = f 0 1
   where
     f i r = do
@@ -237,11 +246,11 @@ fromPMF p = f 0 1
       if b then pure i else f (i + 1) (r - q)
 
 -- | Draw from a discrete distributions using the probability mass function.
-discrete :: (DiscreteDistr d, MonadDistribution m) => d -> m Int
+discrete :: (Monad m, DiscreteDistr d, MonadDistribution m) => d -> m Int
 discrete = fromPMF . probability
 
 -- | Monads that can score different execution paths.
-class (Monad m) => MonadFactor m where
+class MonadFactor m where
   -- | Record a likelihood.
   score ::
     -- | likelihood of the execution path
@@ -289,8 +298,9 @@ normalPdf mu sigma x = Exp $ logDensity (normalDistr mu sigma) x
 poissonPdf :: Double -> Integer -> Log Double
 poissonPdf rate n = Exp $ logProbability (Poisson.poisson rate) (fromIntegral n)
 
+-- FIXME should work with Applicative
 -- | multivariate normal
-mvNormal :: (MonadDistribution m) => V.Vector Double -> Matrix Double -> m (V.Vector Double)
+mvNormal :: (Monad m, (MonadDistribution m)) => V.Vector Double -> Matrix Double -> m (V.Vector Double)
 mvNormal mu bigSigma = do
   let n = length mu
   ss <- replicateM n (normal 0 1)
@@ -306,7 +316,7 @@ data Bayesian m z o = Bayesian
   }
 
 -- | p(z|o)
-posterior :: (MonadMeasure m, Foldable f, Functor f) => Bayesian m z o -> f o -> m z
+posterior :: (Monad m, MonadMeasure m, Foldable f, Functor f) => Bayesian m z o -> f o -> m z
 posterior Bayesian {..} os = do
   z <- prior
   factor $ product $ fmap (likelihood z) os
@@ -316,7 +326,7 @@ priorPredictive :: (Monad m) => Bayesian m a b -> m b
 priorPredictive bm = prior bm >>= generative bm
 
 posteriorPredictive ::
-  (MonadMeasure m, Foldable f, Functor f) =>
+  (Monad m, MonadMeasure m, Foldable f, Functor f) =>
   Bayesian m a b ->
   f b ->
   m b
@@ -342,53 +352,53 @@ histogramToList = H.asList
 ----------------------------------------------------------------------------
 -- Instances that lift probabilistic effects to standard tranformers.
 
-instance (MonadDistribution m) => MonadDistribution (IdentityT m) where
+instance (Monad m, (MonadDistribution m)) => MonadDistribution (IdentityT m) where
   random = lift random
   bernoulli = lift . bernoulli
 
-instance (MonadFactor m) => MonadFactor (IdentityT m) where
+instance (Monad m, (MonadFactor m)) => MonadFactor (IdentityT m) where
   score = lift . score
 
-instance (MonadMeasure m) => MonadMeasure (IdentityT m)
+instance (Monad m, (MonadMeasure m)) => MonadMeasure (IdentityT m)
 
-instance (MonadDistribution m) => MonadDistribution (ExceptT e m) where
+instance (Monad m, (MonadDistribution m)) => MonadDistribution (ExceptT e m) where
   random = lift random
   uniformD = lift . uniformD
 
-instance (MonadFactor m) => MonadFactor (ExceptT e m) where
+instance (Monad m, (MonadFactor m)) => MonadFactor (ExceptT e m) where
   score = lift . score
 
-instance (MonadMeasure m) => MonadMeasure (ExceptT e m)
+instance (Monad m, (MonadMeasure m)) => MonadMeasure (ExceptT e m)
 
-instance (MonadDistribution m) => MonadDistribution (ReaderT r m) where
+instance (Monad m, (MonadDistribution m)) => MonadDistribution (ReaderT r m) where
   random = lift random
   bernoulli = lift . bernoulli
 
-instance (MonadFactor m) => MonadFactor (ReaderT r m) where
+instance (Monad m, (MonadFactor m)) => MonadFactor (ReaderT r m) where
   score = lift . score
 
-instance (MonadMeasure m) => MonadMeasure (ReaderT r m)
+instance (Monad m, (MonadMeasure m)) => MonadMeasure (ReaderT r m)
 
-instance (Monoid w, MonadDistribution m) => MonadDistribution (WriterT w m) where
+instance (Monoid w, Monad m, MonadDistribution m) => MonadDistribution (WriterT w m) where
   random = lift random
   bernoulli = lift . bernoulli
   categorical = lift . categorical
 
-instance (Monoid w, MonadFactor m) => MonadFactor (WriterT w m) where
+instance (Monoid w, Monad m, MonadFactor m) => MonadFactor (WriterT w m) where
   score = lift . score
 
-instance (Monoid w, MonadMeasure m) => MonadMeasure (WriterT w m)
+instance (Monoid w, Monad m, MonadMeasure m) => MonadMeasure (WriterT w m)
 
-instance (MonadDistribution m) => MonadDistribution (StateT s m) where
+instance (Monad m, (MonadDistribution m)) => MonadDistribution (StateT s m) where
   random = lift random
   bernoulli = lift . bernoulli
   categorical = lift . categorical
   uniformD = lift . uniformD
 
-instance (MonadFactor m) => MonadFactor (StateT s m) where
+instance (Monad m, (MonadFactor m)) => MonadFactor (StateT s m) where
   score = lift . score
 
-instance (MonadMeasure m) => MonadMeasure (StateT s m)
+instance ((Monad m, MonadMeasure m)) => MonadMeasure (StateT s m)
 
 instance (Applicative m, (MonadDistribution m)) => MonadDistribution (ListT m) where
   random = ListT.lift random
@@ -406,10 +416,10 @@ instance (Applicative m, (MonadFactor m)) => MonadFactor (ListT m) where
 
 instance ((Monad m, MonadMeasure m)) => MonadMeasure (ListT m)
 
-instance (MonadDistribution m) => MonadDistribution (ContT r m) where
+instance (Monad m, (MonadDistribution m)) => MonadDistribution (ContT r m) where
   random = lift random
 
-instance (MonadFactor m) => MonadFactor (ContT r m) where
+instance (Monad m, (MonadFactor m)) => MonadFactor (ContT r m) where
   score = lift . score
 
-instance (MonadMeasure m) => MonadMeasure (ContT r m)
+instance (Monad m, (MonadMeasure m)) => MonadMeasure (ContT r m)
