@@ -390,15 +390,21 @@ instance (MonadFactor m) => MonadFactor (StateT s m) where
 
 instance (MonadMeasure m) => MonadMeasure (StateT s m)
 
-instance (MonadDistribution m) => MonadDistribution (ListT m) where
-  random = lift random
-  bernoulli = lift . bernoulli
-  categorical = lift . categorical
+instance (Applicative m, (MonadDistribution m)) => MonadDistribution (ListT m) where
+  random = ListT.lift random
+  bernoulli = ListT.lift . bernoulli
+  categorical = ListT.lift . categorical
+  dirichlet as = do
+    xs <- VG.mapM (`gamma` 1) as
+    let s = VG.sum xs
+    let ys = VG.map (/ s) xs
+    pure ys
 
-instance (MonadFactor m) => MonadFactor (ListT m) where
-  score = lift . score
 
-instance (MonadMeasure m) => MonadMeasure (ListT m)
+instance (Applicative m, (MonadFactor m)) => MonadFactor (ListT m) where
+  score = ListT.lift . score
+
+instance ((Monad m, MonadMeasure m)) => MonadMeasure (ListT m)
 
 instance (MonadDistribution m) => MonadDistribution (ContT r m) where
   random = lift random
