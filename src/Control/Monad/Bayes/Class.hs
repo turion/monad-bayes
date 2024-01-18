@@ -2,6 +2,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-deprecations #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 -- |
 -- Module      : Control.Monad.Bayes.Class
@@ -105,6 +106,7 @@ import Statistics.Distribution.Geometric (geometric0)
 import Statistics.Distribution.Normal (normalDistr)
 import Statistics.Distribution.Poisson qualified as Poisson
 import Statistics.Distribution.Uniform (uniformDistr)
+import Control.Monad.Trans.Select
 
 -- | Monads that can draw random variables.
 class (Monad m) => MonadDistribution m where
@@ -397,3 +399,30 @@ instance (MonadFactor m) => MonadFactor (ContT r m) where
   score = lift . score
 
 instance (MonadMeasure m) => MonadMeasure (ContT r m)
+
+instance MonadDistribution m => MonadDistribution (SelectT (Log Double) m) where
+  random = lift random
+
+instance MonadDistribution m => MonadFactor (SelectT (Log Double) m) where
+  score p = SelectT $ \f -> _
+instance MonadDistribution m => MonadMeasure (SelectT (Log Double) m) where
+
+observe :: MonadFactor m => a -> SelectT (Log Double) m a -> m a
+observe a action = runSelectT action _
+
+runThing :: SelectT (Log Double) m a -> m a
+runThing = _ . runSelectT
+
+unfairCoin :: MonadDistribution m => SelectT (Log Double) m Bool
+unfairCoin = SelectT $ \p -> do
+  pTrue <- p True
+  pFalse <- p False
+  let prob = pTrue / (pTrue + pFalse)
+  bernoulli $ exp $ ln prob
+
+oneof :: MonadDistribution m => SelectT (Log Double) m a -> SelectT (Log Double) m b -> SelectT (Log Double) m (Either a b)
+oneof ma mb = SelectT $ \f -> do
+  a <- runSelectT ma $ f . Left
+  b <- runSelectT mb $ f . Right
+  side <- bernoulli 0.5
+  return $ if side then Left a else Right b
