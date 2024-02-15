@@ -10,10 +10,7 @@ The idea here is to record both how to sample a value from a distribution as wel
 -}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-module Control.Monad.Bayes.WithPdf where
+module Control.Monad.Bayes.WithPDF where
 
 -- base
 import Control.Monad (liftM, ap)
@@ -21,76 +18,65 @@ import Control.Monad (liftM, ap)
 -- log-domain
 import Numeric.Log
 
--- operational
-
 -- monad-bayes
 import Control.Monad.Bayes.Class
-import Control.Monad.Operational (ProgramT, interpretWithMonadT, singleton, view, ProgramViewT (..), viewT)
 
-data WithPdf m a = WithPdf
+data WithPDFT m a = WithPDFT
   { sample :: m a
-  , pdf :: a -> m (Log Double)
+  , pdf :: Eq a => a -> m (Log Double)
   }
-
-runWithPdf :: (Monad m, MonadFactor m) => WithPdf m a -> m a
-runWithPdf WithPdf { sample, pdf} = do
-  a <- sample
-  p <- pdf a
-  score p
-  return a
-
-newtype WithPdfT m a = WithPdfT {getWithPdfT :: ProgramT (WithPdf m) m a}
-  deriving newtype (Functor, Applicative, Monad)
-
-withPdfT :: WithPdf m a -> WithPdfT m a
-withPdfT = WithPdfT . singleton
 
 -- FIXME Implment Num
 
-runWithPdfT :: (Monad m, MonadFactor m) => WithPdfT m a -> m a
-runWithPdfT = runWithPdfT' . getWithPdfT
- where
-  runWithPdfT' :: (Monad m, MonadFactor m) => ProgramT (WithPdf m) m a -> m a
-  runWithPdfT' = interpretWithMonadT runWithPdf
+instance Monad m => Functor (WithPDFT m) where
+  fmap = liftM
+  -- FIXME This still produces Borel's paradox! Can we add rewrite rules for typical functions like `(* x)`, `(+ x)` etc.?
 
+instance Monad m => Applicative (WithPDFT m) where
+  pure a = WithPDFT
+    { sample = pure a
+    , pdf = \a' -> return $ if a == a' then 1 else 0
+    }
+  (<*>) = ap
 
-instance MonadDistribution m => MonadDistribution (WithPdfT m) where
-  random = withPdfT WithPdf
+instance Monad m => Monad (WithPDFT m) where
+  WithPDFT { sample } >>= f = WithPDFT
+    { sample = do
+        a <- sample
+        let WithPDFT { sample } = f a
+        sample
+    , pdf = \b -> do
+        a <- sample
+        let WithPDFT { pdf } = f a
+        pdf b
+    }
+  -- FIXME This doesn't satisfy `ma >>= return == ma`!
+  -- Can we add a rewrite rule that enforces that? (+ a test that checks it)
+
+instance MonadDistribution m => MonadDistribution (WithPDFT m) where
+  random = WithPDFT
     { sample = random
     , pdf = const $ return 1
     }
 
-  uniform lower upper = withPdfT WithPdf
+  uniform lower upper = WithPDFT
     { sample = uniform lower upper
     , pdf = const $ return $ (1 /) $ Exp $ log $ lower - upper
     }
 
-  normal mu sigma = withPdfT WithPdf
+  normal mu sigma = WithPDFT
     { sample = normal mu sigma
     , pdf = return . normalPdf mu sigma
     }
 
-instance MonadMeasure m => MonadFactor (WithPdfT m) where
-  score probability = withPdfT WithPdf
-    { sample = return ()
-    , pdf = const $ return probability
+instance MonadFactor m => MonadFactor (WithPDFT m) where
+  score probability = WithPDFT
+    { sample = score probability
+    , pdf = const $ return 1
     }
-    -- Not sure why I had this first:
-  -- score probability = WithPdfT
-  --   { sample = score probability
-  --   , pdf = const $ return 1
-  --   }
 
--- | Semantically like @\a' -> condition $ a == a'@, but avoids Borel's paradox whenever possible
-observe :: forall a m . (MonadFactor m, Eq a) => a -> WithPdfT m a -> m ()
-observe a = (observe' =<<) . viewT . getWithPdfT
- where
-  observe' :: MonadFactor m => ProgramViewT (WithPdf m) m a -> m ()
-  observe' (Return a') = condition $ a == a'
-  -- FIXME I've never used pdf here!
-  observe' (WithPdf {sample, pdf} :>>= f) = do
-    b <- sample
-    observe a $ WithPdfT $ f b
- -- WithPdfT { pdf } = do
-  -- probability <- pdf a
-  -- score probability
+-- | Semantically like @\a' -> condition $ a == a'@, but avoids Borel's paradox
+observe :: (MonadFactor m, Eq a) => a -> WithPDFT m a -> m ()
+observe a WithPDFT { pdf } = do
+  probability <- pdf a
+  score probability
