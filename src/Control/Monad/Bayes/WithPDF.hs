@@ -37,7 +37,15 @@ instance Monad m => Applicative (WithPDFT m) where
     { sample = pure a
     , pdf = \a' -> return $ if a == a' then 1 else 0
     }
-  (<*>) = ap
+  a <*> f = WithPDFT
+    { sample = sample a <*> sample f
+    , pdf = \b -> do
+        f' <- sample f
+        a' <- sample a
+        let pdff = pdf f
+            pdfa = pdf a
+        _
+    }
 
 instance Monad m => Monad (WithPDFT m) where
   WithPDFT { sample } >>= f = WithPDFT
