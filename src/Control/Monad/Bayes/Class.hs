@@ -1,6 +1,11 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-deprecations #-}
 
 -- |
@@ -71,6 +76,7 @@ module Control.Monad.Bayes.Class
     Measure,
     Kernel,
     Log (ln, Exp),
+    SamplingStrategyT (..),
   )
 where
 
@@ -82,6 +88,7 @@ import Control.Monad.Identity (IdentityT)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.State (StateT)
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Select (SelectT (SelectT), runSelectT)
 import Control.Monad.Writer (WriterT)
 import Data.Histogram qualified as H
 import Data.Histogram.Fill qualified as H
@@ -397,3 +404,48 @@ instance (MonadFactor m) => MonadFactor (ContT r m) where
   score = lift . score
 
 instance (MonadMeasure m) => MonadMeasure (ContT r m)
+
+newtype SamplingStrategyT m a = SamplingStrategyT {getSamplingStrategyT :: SelectT (Log Double) m a}
+  deriving newtype (Functor, Applicative, Monad)
+
+samplingStrategyT :: ((a -> m (Log Double)) -> m a) -> SamplingStrategyT m a
+samplingStrategyT = SamplingStrategyT . SelectT
+
+runSamplingStrategyT :: (Monad m) => SamplingStrategyT m a -> (a -> Log Double) -> m a
+runSamplingStrategyT = (. (return .)) . runSelectT . getSamplingStrategyT
+
+accept :: (MonadDistribution m) => m a -> SamplingStrategyT m a
+accept ma = samplingStrategyT $ \probabilityFunction ->
+  let go = do
+        a <- ma
+        p <- probabilityFunction a
+        accepted <- bernoulli $ ln $ p
+        if accepted then return a else go
+   in go
+
+finite :: forall m a. (MonadDistribution m, Bounded a, Enum a) => SamplingStrategyT m a
+finite = samplingStrategyT $ \probabilityFunction ->
+  let minIndex = fromEnum (minBound @a)
+      maxIndex = fromEnum (minBound @a)
+   in do
+        probs <- Prelude.mapM probabilityFunction [minBound .. maxBound]
+        fmap toEnum $ logCategorical $ V.fromList probs
+
+-- | More space efficient than finite, but assumes the probability function to be normalized
+finite' :: forall m a. (MonadDistribution m, Bounded a, Enum a) => SamplingStrategyT m a
+finite' = samplingStrategyT $ \probabilityFunction ->
+  let go :: a -> Log Double -> m a
+      go a p = do
+        pDiff <- probabilityFunction a
+        let p' = p - pDiff
+        if p' < 0 then return a else go (succ a) p'
+   in (Exp . log <$> random) >>= go minBound
+
+bayesian :: (Monad m) => (a -> b -> Log Double) -> b -> SamplingStrategyT m a -> m a
+bayesian likelihood observation = flip runSamplingStrategyT $ flip likelihood observation
+
+scoring :: Functor m => Log Double -> SamplingStrategyT m a -> SamplingStrategyT m a
+scoring p = SamplingStrategyT . SelectT . (. (fmap (* p) .)) . runSelectT . getSamplingStrategyT
+
+instance (Monad m, MonadFactor m) => MonadFactor (SamplingStrategyT m) where
+  score p = samplingStrategyT $ \pFun -> score p >> pFun () >>= score
