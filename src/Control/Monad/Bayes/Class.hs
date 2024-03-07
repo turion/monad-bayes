@@ -408,6 +408,8 @@ instance (MonadMeasure m) => MonadMeasure (ContT r m)
 newtype SamplingStrategyT m a = SamplingStrategyT {getSamplingStrategyT :: SelectT (Log Double) m a}
   deriving newtype (Functor, Applicative, Monad)
 
+-- SelectT r m a -> ContT r m a
+
 samplingStrategyT :: ((a -> m (Log Double)) -> m a) -> SamplingStrategyT m a
 samplingStrategyT = SamplingStrategyT . SelectT
 
@@ -449,3 +451,17 @@ scoring p = SamplingStrategyT . SelectT . (. (fmap (* p) .)) . runSelectT . getS
 
 instance (Monad m, MonadFactor m) => MonadFactor (SamplingStrategyT m) where
   score p = samplingStrategyT $ \pFun -> score p >> pFun () >>= score
+
+newtype SamplingStrategy2T m a = SamplingStrategy2T {getSamplingStrategy2T :: (a -> Log Double) -> m a}
+
+class SamplingAlgebra m where
+  alg :: m (Log Double) -> Log Double
+
+instance Functor m => Functor (SamplingStrategy2T m)
+instance (SamplingAlgebra m, Monad m) => Applicative (SamplingStrategy2T m)
+instance (SamplingAlgebra m, Monad m) => Monad (SamplingStrategy2T m) where
+  SamplingStrategy2T strategy >>= f = SamplingStrategy2T $ \probB -> do
+    let g a = (getSamplingStrategy2T $ f a) probB
+        probA a = alg $ probB <$> g a
+    a <- strategy probA
+    g a
